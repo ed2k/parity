@@ -45,6 +45,9 @@ Notable changes in reversed alphabetical order:
   - This activates the Musicoin Byzantium hardfork ([MCIP-6](https://github.com/Musicoin/MCIPs/blob/master/MCIPS/mcip-6.md)) at block `2_222_222`.
   - Please, upgrade your clients if you run a Musicoin configuration.
 
+
+
+
 The full list of included changes:
 
 - Backports ([#8624](https://github.com/paritytech/parity/pull/8624))

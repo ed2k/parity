@@ -41,12 +41,14 @@ pub enum SpecType {
 	Ellaism,
 	Easthub,
 	Social,
+    EthGold,
 	Dev,
 	Custom(String),
 }
 
 impl Default for SpecType {
 	fn default() -> Self {
+        // TODO: switch to EthGold
 		SpecType::Foundation
 	}
 }
@@ -67,6 +69,7 @@ impl str::FromStr for SpecType {
 			"ellaism" => SpecType::Ellaism,
 			"easthub" => SpecType::Easthub,
 			"social" => SpecType::Social,
+            "ethgold" | "etg" => SpecType::EthGold,
 			"dev" => SpecType::Dev,
 			other => SpecType::Custom(other.into()),
 		};
@@ -88,6 +91,7 @@ impl fmt::Display for SpecType {
 			SpecType::Easthub => "easthub",
 			SpecType::Social => "social",
 			SpecType::Kovan => "kovan",
+            SpecType::EthGold => "ethgold",
 			SpecType::Dev => "dev",
 			SpecType::Custom(ref custom) => custom,
 		})
@@ -109,6 +113,7 @@ impl SpecType {
 			SpecType::Easthub => Ok(ethereum::new_easthub(params)),
 			SpecType::Social => Ok(ethereum::new_social(params)),
 			SpecType::Kovan => Ok(ethereum::new_kovan(params)),
+            SpecType::EthGold => Ok(ethereum::new_ethgold(params)),
 			SpecType::Dev => Ok(Spec::new_instant()),
 			SpecType::Custom(ref filename) => {
 				let file = fs::File::open(filename).map_err(|e| format!("Could not load specification file at {}: {}", filename, e))?;
@@ -349,10 +354,13 @@ mod tests {
 		assert_eq!(SpecType::Olympic, "olympic".parse().unwrap());
 		assert_eq!(SpecType::Classic, "classic".parse().unwrap());
 		assert_eq!(SpecType::Morden, "classic-testnet".parse().unwrap());
+		assert_eq!(SpecType::EthGold, "ethgold".parse().unwrap());
+		assert_eq!(SpecType::EthGold, "etg".parse().unwrap());
 	}
 
 	#[test]
 	fn test_spec_type_default() {
+		// TODO: need to modify this after we switch to ethgold
 		assert_eq!(SpecType::Foundation, SpecType::default());
 	}
 
@@ -366,6 +374,7 @@ mod tests {
 		assert_eq!(format!("{}", SpecType::Expanse), "expanse");
 		assert_eq!(format!("{}", SpecType::Musicoin), "musicoin");
 		assert_eq!(format!("{}", SpecType::Kovan), "kovan");
+		assert_eq!(format!("{}", SpecType::EthGold), "ethgold");
 		assert_eq!(format!("{}", SpecType::Dev), "dev");
 		assert_eq!(format!("{}", SpecType::Custom("foo/bar".into())), "foo/bar");
 	}

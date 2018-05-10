@@ -1,10 +1,10 @@
 [package]
-description = "Parity Ethereum client"
+description = "ParityETG Ethereum client"
 name = "parity"
 # NOTE Make sure to update util/version/Cargo.toml as well
 version = "1.12.0"
 license = "GPL-3.0"
-authors = ["Parity Technologies <admin@parity.io>"]
+authors = ["Parity Technologies <admin@parity.io>, EthGold Team"]
 
 [dependencies]
 log = "0.3"
