@@ -1,6 +1,6 @@
 [package]
 description = "ParityETG Ethereum client"
-name = "parityetg"
+name = "parity"
 # NOTE Make sure to update util/version/Cargo.toml as well
 version = "1.12.0"
 license = "GPL-3.0"
@@ -112,7 +112,7 @@ path = "parity/lib.rs"
 
 [[bin]]
 path = "parity/main.rs"
-name = "parityetg"
+name = "parity"
 
 [profile.dev]
 panic = "abort"
