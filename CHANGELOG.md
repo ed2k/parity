@@ -1,5 +1,8 @@
-## Parity [v1.11.0](https://github.com/paritytech/parity/releases/tag/v1.10.0) (2018-05-09)
+## Parity [v1.11.2](https://github.com/paritytech/parity/releases/tag/v1.10.2) (2018-05-24)
 
+ETG release
+
+## Parity [v1.11.0](https://github.com/paritytech/parity/releases/tag/v1.10.0) (2018-05-09)
 This is the Parity 1.11.0-beta release! Hurray!
 
 Notable changes in reversed alphabetical order:
@@ -44,6 +47,9 @@ Notable changes in reversed alphabetical order:
 - CHAIN SPECS: **Add MCIP-6 Byzyantium transition to Musicoin spec** [#7841](https://github.com/paritytech/parity/pull/7841)
   - This activates the Musicoin Byzantium hardfork ([MCIP-6](https://github.com/Musicoin/MCIPs/blob/master/MCIPS/mcip-6.md)) at block `2_222_222`.
   - Please, upgrade your clients if you run a Musicoin configuration.
+
+
+
 
 The full list of included changes:
 

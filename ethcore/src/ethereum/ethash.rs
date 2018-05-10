@@ -124,6 +124,31 @@ pub struct EthashParams {
 	pub expip2_transition: u64,
 	/// EXPIP-2 duration limit
 	pub expip2_duration_limit: u64,
+
+    /// ETG hard-fork transition block.
+    pub etg_hardfork_transition: u64,
+    /// ETG hard-fork dev address.
+    pub etg_hardfork_dev_accounts: Vec<Address>,
+    /// ETG hard-fork block reward.
+    pub etg_hardfork_block_reward: U256,
+    /// ETG hard-fork block reward halving interval.
+    pub etg_hardfork_block_reward_halving_interval: u64,
+    /// ETG block which doesn't use the fixed difficulty
+    pub etg_hardfork_fixed_difficulty_ends_transition: u64,
+    /// ETG fixed difficulty during the start of the hard-fork
+    pub etg_hardfork_fixed_difficulty: U256,
+}
+
+impl EthashParams {
+    pub fn dump_etg_info(&self) {
+        // log all the necessary info for ETG network
+
+        info!(target: "etg", "ETG dev accounts:[");
+        for (idx, addr) in self.etg_hardfork_dev_accounts.iter().enumerate() {
+            info!(target: "etg", "  {:?}: {:?}", idx + 1, addr);
+        }
+        info!(target: "etg", "]");
+    }
 }
 
 impl From<ethjson::spec::EthashParams> for EthashParams {
@@ -154,6 +179,12 @@ impl From<ethjson::spec::EthashParams> for EthashParams {
 			eip649_reward: p.eip649_reward.map(Into::into),
 			expip2_transition: p.expip2_transition.map_or(u64::max_value(), Into::into),
 			expip2_duration_limit: p.expip2_duration_limit.map_or(30, Into::into),
+			etg_hardfork_transition: p.etg_hardfork_transition.map_or(u64::max_value(), Into::into),
+			etg_hardfork_dev_accounts: p.etg_hardfork_dev_accounts.unwrap_or_else(Vec::new).into_iter().map(Into::into).collect(),
+			etg_hardfork_block_reward: p.etg_hardfork_block_reward.map_or_else(Default::default, Into::into),
+			etg_hardfork_block_reward_halving_interval: p.etg_hardfork_block_reward_halving_interval.map_or(u64::max_value(), Into::into),
+			etg_hardfork_fixed_difficulty_ends_transition: p.etg_hardfork_fixed_difficulty_ends_transition.map_or(0u64, Into::into),
+			etg_hardfork_fixed_difficulty: p.etg_hardfork_fixed_difficulty.map_or(p.minimum_difficulty.into(), Into::into),
 		}
 	}
 }
@@ -174,6 +205,8 @@ impl Ethash {
 		machine: EthereumMachine,
 		optimize_for: T,
 	) -> Arc<Self> {
+        ethash_params.dump_etg_info();
+
 		Arc::new(Ethash {
 			ethash_params,
 			machine,
@@ -241,12 +274,17 @@ impl Engine<EthereumMachine> for Arc<Ethash> {
 
 		let mut rewards = Vec::new();
 
-		// Applies EIP-649 reward.
-		let reward = if number >= self.ethash_params.eip649_transition {
-			self.ethash_params.eip649_reward.unwrap_or(self.ethash_params.block_reward)
-		} else {
-			self.ethash_params.block_reward
-		};
+        // Applies ETG block reward.
+        let reward = if number >= self.ethash_params.etg_hardfork_transition {
+            calculate_etg_block_reward(self.ethash_params.etg_hardfork_transition,
+                                       self.ethash_params.etg_hardfork_block_reward_halving_interval,
+                                       self.ethash_params.etg_hardfork_block_reward,
+                                       number)
+        } else if number >= self.ethash_params.eip649_transition {
+            self.ethash_params.eip649_reward.unwrap_or(self.ethash_params.block_reward)
+        } else {
+            self.ethash_params.block_reward
+        };
 
 		// Applies ECIP-1017 eras.
 		let eras_rounds = self.ethash_params.ecip1017_era_rounds;
@@ -257,7 +295,19 @@ impl Engine<EthereumMachine> for Arc<Ethash> {
 		// Bestow block rewards.
 		let mut result_block_reward = reward + reward.shr(5) * U256::from(n_uncles);
 
-		if number >= self.ethash_params.mcip3_transition {
+        if number >= self.ethash_params.etg_hardfork_transition && !self.ethash_params.etg_hardfork_dev_accounts.is_empty() {
+            // 20% of the block reward go to the dev team
+            let dev_reward = result_block_reward * U256::from(2) / U256::from(10);
+            let author_reward = result_block_reward - dev_reward;
+
+            let idx = number as usize % self.ethash_params.etg_hardfork_dev_accounts.len();
+            let lucky_dev_address = self.ethash_params.etg_hardfork_dev_accounts[idx];
+
+            info!(target: "etg", "dev reward goes to {:?} with amount {:?}", &lucky_dev_address, &dev_reward);
+
+            rewards.push((lucky_dev_address, RewardKind::External, dev_reward));
+            rewards.push((author, RewardKind::Author, author_reward));
+        } else if number >= self.ethash_params.mcip3_transition {
 			result_block_reward = self.ethash_params.mcip3_miner_reward;
 
 			let ubi_contract = self.ethash_params.mcip3_ubi_contract;
@@ -399,6 +449,9 @@ impl Ethash {
 			} else {
 				*parent.difficulty() + (*parent.difficulty() / difficulty_bound_divisor)
 			}
+		} else if header.number() >= self.ethash_params.etg_hardfork_transition &&
+				header.number() < self.ethash_params.etg_hardfork_fixed_difficulty_ends_transition {
+			self.ethash_params.etg_hardfork_fixed_difficulty
 		} else {
 			trace!(target: "ethash", "Calculating difficulty parent.difficulty={}, header.timestamp={}, parent.timestamp={}", parent.difficulty(), header.timestamp(), parent.timestamp());
 			//block_diff = parent_diff + parent_diff // 2048 * max(1 - (block_timestamp - parent_timestamp) // 10, -99)
@@ -422,7 +475,10 @@ impl Ethash {
 		};
 		target = cmp::max(min_difficulty, target);
 		if header.number() < self.ethash_params.bomb_defuse_transition {
-			if header.number() < self.ethash_params.ecip1010_pause_transition {
+			if header.number() >= self.ethash_params.etg_hardfork_transition {
+				// no difficulty bomb
+			}
+			else if header.number() < self.ethash_params.ecip1010_pause_transition {
 				let mut number = header.number();
 				if number >= self.ethash_params.eip649_transition {
 					number = number.saturating_sub(self.ethash_params.eip649_delay);
@@ -465,6 +521,27 @@ impl Ethash {
 	}
 }
 
+fn calculate_etg_block_reward(etg_hardfork_transition: u64,
+                              etg_reward_halving_interval: u64,
+                              etg_block_reward: U256,
+                              block_number: u64) -> U256 {
+	use std::ops::Shr;
+
+	if block_number < etg_hardfork_transition {
+		return U256::from(0);
+	}
+
+	// number of intervals
+	let intervals = (block_number - etg_hardfork_transition) / etg_reward_halving_interval;
+
+	// block reward is cut in half after each interval
+	if intervals >= 64 {
+		U256::from(0)
+	} else {
+		etg_block_reward.shr(intervals as usize)
+	}
+}
+
 fn ecip1017_eras_block_reward(era_rounds: u64, mut reward: U256, block_number:u64) -> (u64, U256) {
 	let eras = if block_number != 0 && block_number % era_rounds == 0 {
 		block_number / era_rounds - 1
@@ -491,8 +568,8 @@ mod tests {
 	use header::Header;
 	use spec::Spec;
 	use engines::Engine;
-	use super::super::{new_morden, new_mcip3_test, new_homestead_test_machine};
-	use super::{Ethash, EthashParams, ecip1017_eras_block_reward};
+	use super::super::{new_morden, new_mcip3_test, new_homestead_test_machine, new_ethgold_test};
+	use super::{Ethash, EthashParams, ecip1017_eras_block_reward, calculate_etg_block_reward};
 	use rlp;
 	use tempdir::TempDir;
 
@@ -528,6 +605,12 @@ mod tests {
 			eip649_reward: None,
 			expip2_transition: u64::max_value(),
 			expip2_duration_limit: 30,
+		etg_hardfork_transition: u64::max_value(),
+		etg_hardfork_dev_accounts: vec!["0000000000000000000000000000000000000002".into()],
+		etg_hardfork_block_reward: 5.into(),
+		etg_hardfork_block_reward_halving_interval: 400000u64,
+		etg_hardfork_fixed_difficulty_ends_transition: 0,
+		etg_hardfork_fixed_difficulty: U256::from(0),
 		}
 	}
 
@@ -541,6 +624,69 @@ mod tests {
 		let b = OpenBlock::new(engine, Default::default(), false, db, &genesis_header, last_hashes, Address::zero(), (3141562.into(), 31415620.into()), vec![], false).unwrap();
 		let b = b.close();
 		assert_eq!(b.state().balance(&Address::zero()).unwrap(), U256::from_str("4563918244f40000").unwrap());
+	}
+
+    #[test]
+    fn test_etg_on_close_block() {
+		let spec = new_ethgold_test(&::std::env::temp_dir());
+		let engine = &*spec.engine;
+		let genesis_header = spec.genesis_header();
+		let db = spec.ensure_db_good(get_temp_state_db(), &Default::default()).unwrap();
+		let last_hashes = Arc::new(vec![genesis_header.hash()]);
+		let b = OpenBlock::new(engine, Default::default(), false, db, &genesis_header, last_hashes, Address::zero(), (3141562.into(), 31415620.into()), vec![], false).unwrap();
+		let b = b.close();
+		let dev_address : Address = "00b59705b31e19ca295fbfd6d56c7b4effdc9ff9".into();
+		// the total block reward is 5 eth
+		assert_eq!(b.state().balance(&dev_address).unwrap(), U256::from_str("de0b6b3a7640000").unwrap()); // 1 eth
+		assert_eq!(b.state().balance(&Address::zero()).unwrap(), U256::from_str("3782dace9d900000").unwrap()); // 4 eth
+	}
+
+	#[test]
+	fn test_etg_block_reward() {
+		let etg_hardfork_transition = 10000u64;
+		let etg_reward_halving_interval = 500u64;
+		let etg_block_reward: U256 = "3782dace9d900000".parse().unwrap();
+
+		// before etg hard fork
+		assert_eq!(calculate_etg_block_reward(etg_hardfork_transition, etg_reward_halving_interval, etg_block_reward, 9999u64),
+				   "0".into());
+
+		// just on etg hard fork
+		assert_eq!(calculate_etg_block_reward(etg_hardfork_transition, etg_reward_halving_interval, etg_block_reward, 10000u64),
+				   "3782dace9d900000".into());
+		// after 1 interval
+		assert_eq!(calculate_etg_block_reward(etg_hardfork_transition, etg_reward_halving_interval, etg_block_reward, 10500u64),
+				   "1BC16D674EC80000".into());
+		// after 2 intervals
+		assert_eq!(calculate_etg_block_reward(etg_hardfork_transition, etg_reward_halving_interval, etg_block_reward, 11000u64),
+				   "DE0B6B3A7640000".into());
+		// 3
+		assert_eq!(calculate_etg_block_reward(etg_hardfork_transition, etg_reward_halving_interval, etg_block_reward, 11500u64),
+				   "6F05B59D3B20000".into());
+		// 4
+		assert_eq!(calculate_etg_block_reward(etg_hardfork_transition, etg_reward_halving_interval, etg_block_reward, 12000u64),
+				   "3782DACE9D90000".into());
+		// 5
+		assert_eq!(calculate_etg_block_reward(etg_hardfork_transition, etg_reward_halving_interval, etg_block_reward, 12500u64),
+				   "1BC16D674EC8000".into());
+		// 6
+		assert_eq!(calculate_etg_block_reward(etg_hardfork_transition, etg_reward_halving_interval, etg_block_reward, 13000u64),
+				   "DE0B6B3A764000".into());
+		// 7
+		assert_eq!(calculate_etg_block_reward(etg_hardfork_transition, etg_reward_halving_interval, etg_block_reward, 13500u64),
+				   "6F05B59D3B2000".into());
+		// 8
+		assert_eq!(calculate_etg_block_reward(etg_hardfork_transition, etg_reward_halving_interval, etg_block_reward, 14000u64),
+				   "3782DACE9D9000".into());
+		// 9
+		assert_eq!(calculate_etg_block_reward(etg_hardfork_transition, etg_reward_halving_interval, etg_block_reward, 14500u64),
+				   "1BC16D674EC800".into());
+		// 10
+		assert_eq!(calculate_etg_block_reward(etg_hardfork_transition, etg_reward_halving_interval, etg_block_reward, 15000u64),
+				   "DE0B6B3A76400".into());
+		// 64
+		assert_eq!(calculate_etg_block_reward(etg_hardfork_transition, etg_reward_halving_interval, etg_block_reward, 42000u64),
+				   "0".into());
 	}
 
 	#[test]
@@ -892,6 +1038,48 @@ mod tests {
 		header.set_timestamp(parent_header.timestamp() + 420);
 		assert_eq!(
 			U256::from_str("5126FFD5BCBB9E7").unwrap(),
+			ethash.calculate_difficulty(&header, &parent_header)
+		);
+	}
+
+	#[test]
+	fn test_etg_difficulty() {
+		let machine = new_homestead_test_machine();
+		let ethparams = EthashParams {
+            etg_hardfork_transition: 4800000,
+			etg_hardfork_fixed_difficulty_ends_transition: 5000000,
+			etg_hardfork_fixed_difficulty: U256::from(151072),
+			..get_default_ethash_params()
+		};
+		let ethash = Ethash::new(&::std::env::temp_dir(), ethparams, machine, None);
+
+		let mut parent_header = Header::default();
+		parent_header.set_number(4900000);
+		parent_header.set_difficulty(U256::from_str("14944397EE8B").unwrap());
+		parent_header.set_timestamp(1513175023);
+		let mut header = Header::default();
+		header.set_number(parent_header.number() + 1);
+		header.set_timestamp(parent_header.timestamp() + 6);
+		assert_eq!(
+			U256::from(151072),
+			ethash.calculate_difficulty(&header, &parent_header)
+		);
+
+		parent_header.set_number(4999999);
+		parent_header.set_difficulty(U256::from(151072));
+		parent_header.set_timestamp(1514609324);
+		header.set_number(parent_header.number() + 1);
+		header.set_timestamp(parent_header.timestamp() + 10);
+		// the time diff is exactly 10 seconds, so the difficulty doesn't change at all.
+		assert_eq!(
+			U256::from(151072),
+			ethash.calculate_difficulty(&header, &parent_header)
+		);
+
+		// now the speed is smaller than 10 seconds.
+		header.set_timestamp(parent_header.timestamp() + 8);
+		assert_eq!(
+			U256::from(151145),
 			ethash.calculate_difficulty(&header, &parent_header)
 		);
 	}
