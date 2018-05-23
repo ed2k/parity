@@ -75,6 +75,17 @@ pub fn new_musicoin<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
 	load(params.into(), include_bytes!("../../res/ethereum/musicoin.json"))
 }
 
+/// Create a new EthGold chain spec.
+pub fn new_ethgold<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
+	load(params.into(), include_bytes!("../../res/ethereum/ethgold.json"))
+}
+
+/// Create a new EthGold Test chain spec.
+#[cfg(test)]
+pub fn new_ethgold_test<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
+	load(params.into(), include_bytes!("../../res/ethereum/ethgold_test.json"))
+}
+
 /// Create a new Kovan testnet chain spec.
 pub fn new_kovan<'a, T: Into<SpecParams<'a>>>(params: T) -> Spec {
 	load(params.into(), include_bytes!("../../res/ethereum/kovan.json"))

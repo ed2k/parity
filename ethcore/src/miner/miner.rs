@@ -361,6 +361,17 @@ impl Miner {
 		)
 	}
 
+	/// Try to generate empty blocks if force_sealing is set.
+	pub fn try_generate_empty_block(&self, chain: &MiningBlockChainClient) {
+		let now = Instant::now();
+		let next = *self.next_mandatory_reseal.read();
+		info!(target: "miner", "try generate empty block: force: {:?} now: {:?} next: {:?}", self.forced_sealing(), now, next);
+		if self.forced_sealing() && now > next {
+			*self.next_mandatory_reseal.write() = Instant::now() + self.options.reseal_max_period;
+			self.update_sealing(chain);
+		}
+	}
+
 	#[cfg_attr(feature="dev", allow(match_same_arms))]
 	/// Prepares new block for sealing including top transactions from queue.
 	fn prepare_block(&self, chain: &MiningBlockChainClient) -> (ClosedBlock, Option<H256>) {

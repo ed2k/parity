@@ -358,6 +358,8 @@ pub fn get_default_ethash_extensions() -> EthashExtensions {
 		dao_hardfork_transition: u64::max_value(),
 		dao_hardfork_beneficiary: "0000000000000000000000000000000000000001".into(),
 		dao_hardfork_accounts: Vec::new(),
+		etg_hardfork_dev_accounts: vec!["0000000000000000000000000000000000000002".into()],
+		etg_hardfork_transition: u64::max_value(),
 	}
 }
 
@@ -386,5 +388,11 @@ pub fn get_default_ethash_params() -> EthashParams {
 		eip649_transition: u64::max_value(),
 		eip649_delay: 3_000_000,
 		eip649_reward: None,
+		etg_hardfork_transition: u64::max_value(),
+		etg_hardfork_dev_accounts: vec!["0000000000000000000000000000000000000002".into()],
+		etg_hardfork_block_reward: 5.into(),
+		etg_hardfork_block_reward_halving_interval: 400000u64,
+		etg_hardfork_fixed_difficulty_ends_transition: 0,
+		etg_hardfork_fixed_difficulty: U256::from(0),
 	}
 }

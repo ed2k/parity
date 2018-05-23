@@ -34,6 +34,7 @@ use tx_filter::TransactionFilter;
 
 use bigint::prelude::U256;
 use bytes::BytesRef;
+use bytes::Bytes;
 use util::Address;
 use vm::{CallType, ActionParams, ActionValue, ParamsType};
 use vm::{EnvInfo, Schedule, CreateContractAddress};
@@ -60,6 +61,10 @@ pub struct EthashExtensions {
 	pub dao_hardfork_beneficiary: Address,
 	/// DAO hard-fork DAO accounts list (L)
 	pub dao_hardfork_accounts: Vec<Address>,
+	/// ETG hard-fork transition block.
+	pub etg_hardfork_transition: u64,
+	/// ETG hard-fork dev address.
+	pub etg_hardfork_dev_accounts: Vec<Address>,
 }
 
 impl From<::ethjson::spec::EthashParams> for EthashExtensions {
@@ -73,6 +78,8 @@ impl From<::ethjson::spec::EthashParams> for EthashExtensions {
 			dao_hardfork_transition: p.dao_hardfork_transition.map_or(u64::max_value(), Into::into),
 			dao_hardfork_beneficiary: p.dao_hardfork_beneficiary.map_or_else(Address::new, Into::into),
 			dao_hardfork_accounts: p.dao_hardfork_accounts.unwrap_or_else(Vec::new).into_iter().map(Into::into).collect(),
+			etg_hardfork_transition: p.etg_hardfork_transition.map_or(u64::max_value(), Into::into),
+			etg_hardfork_dev_accounts: p.etg_hardfork_dev_accounts.unwrap_or_else(Vec::new).into_iter().map(Into::into).collect(),
 		}
 	}
 }
@@ -193,6 +200,9 @@ impl EthereumMachine {
 					state.balance(child)
 						.and_then(|b| state.transfer_balance(child, beneficiary, &b, CleanupMode::NoEmpty))?;
 				}
+			} else if block.fields().header.number() == ethash_params.etg_hardfork_transition {
+//				let state = block.fields_mut().state;
+//				state.new_contract(&ethash_params.etg_hardfork_dev_accounts, U256::zero(), U256::zero());
 			}
 		}
 
@@ -354,8 +364,11 @@ impl EthereumMachine {
 
 		let chain_id = if header.number() < self.params().validate_chain_id_transition {
 			t.chain_id()
-		} else if header.number() >= self.params().eip155_transition {
+		} else if header.number() >= self.params().etg_hardfork_transition {
 			Some(self.params().chain_id)
+		} else if header.number() >= self.params().eip155_transition {
+			// ETH uses the network id
+			Some(self.params().network_id)
 		} else {
 			None
 		};
