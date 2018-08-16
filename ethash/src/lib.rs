@@ -20,6 +20,7 @@ extern crate primal;
 extern crate parking_lot;
 extern crate either;
 extern crate memmap;
+extern crate keccak_hash as progpow;
 
 #[macro_use]
 extern crate crunchy;
@@ -42,6 +43,8 @@ use keccak::H256;
 use parking_lot::Mutex;
 pub use seed_compute::SeedHashCompute;
 pub use shared::ETHASH_EPOCH_LENGTH;
+use shared::PROGPOW_START;
+use progpow::{create_light_cache};
 use std::mem;
 use std::path::{Path, PathBuf};
 
@@ -132,7 +135,7 @@ impl EthashManager {
 				Some(light) => light,
 			}
 		};
-		light.compute(header_hash, nonce)
+		light.compute(block_number, header_hash, nonce)
 	}
 }
 

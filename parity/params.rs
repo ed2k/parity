@@ -41,13 +41,14 @@ pub enum SpecType {
 	Ellaism,
 	Easthub,
 	Social,
+	EthGold,
 	Dev,
 	Custom(String),
 }
 
 impl Default for SpecType {
 	fn default() -> Self {
-		SpecType::Foundation
+		SpecType::EthGold
 	}
 }
 
@@ -67,6 +68,7 @@ impl str::FromStr for SpecType {
 			"ellaism" => SpecType::Ellaism,
 			"easthub" => SpecType::Easthub,
 			"social" => SpecType::Social,
+			"ethgold" | "etg" => SpecType::EthGold,
 			"dev" => SpecType::Dev,
 			other => SpecType::Custom(other.into()),
 		};
@@ -87,6 +89,7 @@ impl fmt::Display for SpecType {
 			SpecType::Ellaism => "ellaism",
 			SpecType::Easthub => "easthub",
 			SpecType::Social => "social",
+			SpecType::EthGold => "ethgold",			
 			SpecType::Kovan => "kovan",
 			SpecType::Dev => "dev",
 			SpecType::Custom(ref custom) => custom,
@@ -108,6 +111,7 @@ impl SpecType {
 			SpecType::Ellaism => Ok(ethereum::new_ellaism(params)),
 			SpecType::Easthub => Ok(ethereum::new_easthub(params)),
 			SpecType::Social => Ok(ethereum::new_social(params)),
+			SpecType::EthGold => Ok(ethereum::new_ethgold(params)),
 			SpecType::Kovan => Ok(ethereum::new_kovan(params)),
 			SpecType::Dev => Ok(Spec::new_instant()),
 			SpecType::Custom(ref filename) => {

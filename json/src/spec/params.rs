@@ -72,6 +72,9 @@ pub struct Params {
 	/// See `CommonParams` docs.
 	#[serde(rename="eip155Transition")]
 	pub eip155_transition: Option<Uint>,
+	/// ETG
+    #[serde(rename="etgHardforkTransition")]
+    pub etg_hardfork_transition: Option<Uint>,
 	/// See `CommonParams` docs.
 	#[serde(rename="validateChainIdTransition")]
 	pub validate_chain_id_transition: Option<Uint>,

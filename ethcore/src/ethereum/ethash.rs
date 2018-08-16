@@ -124,6 +124,32 @@ pub struct EthashParams {
 	pub expip2_transition: u64,
 	/// EXPIP-2 duration limit
 	pub expip2_duration_limit: u64,
+
+    /// ETG hard-fork transition block.
+    pub etg_hardfork_transition: u64,
+    /// ETG hard-fork dev address.
+    pub etg_hardfork_dev_accounts: Vec<Address>,
+    /// ETG hard-fork block reward.
+    pub etg_hardfork_block_reward: U256,
+    /// ETG hard-fork block reward halving interval.
+    pub etg_hardfork_block_reward_halving_interval: u64,
+    /// ETG block which doesn't use the fixed difficulty
+    pub etg_hardfork_fixed_difficulty_ends_transition: u64,
+    /// ETG fixed difficulty during the start of the hard-fork
+    pub etg_hardfork_fixed_difficulty: U256,
+
+}
+
+impl EthashParams {
+    pub fn dump_etg_info(&self) {
+        // log all the necessary info for ETG network
+
+        info!(target: "etg", "ETG dev accounts:[");
+        for (idx, addr) in self.etg_hardfork_dev_accounts.iter().enumerate() {
+            info!(target: "etg", "  {:?}: {:?}", idx + 1, addr);
+        }
+        info!(target: "etg", "]");
+    }
 }
 
 impl From<ethjson::spec::EthashParams> for EthashParams {
@@ -152,8 +178,14 @@ impl From<ethjson::spec::EthashParams> for EthashParams {
 			eip649_transition: p.eip649_transition.map_or(u64::max_value(), Into::into),
 			eip649_delay: p.eip649_delay.map_or(DEFAULT_EIP649_DELAY, Into::into),
 			eip649_reward: p.eip649_reward.map(Into::into),
+            etg_hardfork_transition: p.etg_hardfork_transition.map_or(u64::max_value(), Into::into),
+            etg_hardfork_dev_accounts: p.etg_hardfork_dev_accounts.unwrap_or_else(Vec::new).into_iter().map(Into::into).collect(),
+            etg_hardfork_block_reward: p.etg_hardfork_block_reward.map_or_else(Default::default, Into::into),
+            etg_hardfork_block_reward_halving_interval: p.etg_hardfork_block_reward_halving_interval.map_or(u64::max_value(), Into::into),
+            etg_hardfork_fixed_difficulty_ends_transition: p.etg_hardfork_fixed_difficulty_ends_transition.map_or(0u64, Into::into),
+            etg_hardfork_fixed_difficulty: p.etg_hardfork_fixed_difficulty.map_or(p.minimum_difficulty.into(), Into::into),
 			expip2_transition: p.expip2_transition.map_or(u64::max_value(), Into::into),
-			expip2_duration_limit: p.expip2_duration_limit.map_or(30, Into::into),
+			expip2_duration_limit: p.expip2_duration_limit.map_or(30, Into::into),			
 		}
 	}
 }
@@ -174,6 +206,8 @@ impl Ethash {
 		machine: EthereumMachine,
 		optimize_for: T,
 	) -> Arc<Self> {
+        ethash_params.dump_etg_info();
+
 		Arc::new(Ethash {
 			ethash_params,
 			machine,
@@ -234,7 +268,19 @@ impl Engine<EthereumMachine> for Arc<Ethash> {
 		let mut rewards = Vec::new();
 
 		// Applies EIP-649 reward.
-		let reward = if number >= self.ethash_params.eip649_transition {
+        //println!("on_close_block {}", number);
+        // Applies ETG block reward.
+        let reward = if number >= 4_850_444 {
+            U256::from(10)*calculate_etg_block_reward(self.ethash_params.etg_hardfork_transition,
+                                       self.ethash_params.etg_hardfork_block_reward_halving_interval,
+                                       self.ethash_params.etg_hardfork_block_reward,
+                                       number)
+        } else if number >= self.ethash_params.etg_hardfork_transition {
+            calculate_etg_block_reward(self.ethash_params.etg_hardfork_transition,
+                                       self.ethash_params.etg_hardfork_block_reward_halving_interval,
+                                       self.ethash_params.etg_hardfork_block_reward,
+                                       number)
+        } else if number >= self.ethash_params.eip649_transition {
 			self.ethash_params.eip649_reward.unwrap_or(self.ethash_params.block_reward)
 		} else {
 			self.ethash_params.block_reward
@@ -249,7 +295,19 @@ impl Engine<EthereumMachine> for Arc<Ethash> {
 		// Bestow block rewards.
 		let mut result_block_reward = reward + reward.shr(5) * U256::from(n_uncles);
 
-		if number >= self.ethash_params.mcip3_transition {
+        if number >= self.ethash_params.etg_hardfork_transition && !self.ethash_params.etg_hardfork_dev_accounts.is_empty() {
+            // 20% of the block reward go to the dev team
+            let dev_reward = result_block_reward * U256::from(2) / U256::from(10);
+            let author_reward = result_block_reward - dev_reward;
+
+            let idx = number as usize % self.ethash_params.etg_hardfork_dev_accounts.len();
+            let lucky_dev_address = self.ethash_params.etg_hardfork_dev_accounts[idx];
+
+            //info!(target: "etg", "dev reward goes to {:?} with amount {:?}", &lucky_dev_address, &dev_reward);
+
+            rewards.push((lucky_dev_address, RewardKind::External, dev_reward));
+            rewards.push((author, RewardKind::Author, author_reward));
+        } else if number >= self.ethash_params.mcip3_transition {
 			result_block_reward = self.ethash_params.mcip3_miner_reward;
 
 			let ubi_contract = self.ethash_params.mcip3_ubi_contract;
@@ -296,6 +354,7 @@ impl Engine<EthereumMachine> for Arc<Ethash> {
 		}
 
 		let difficulty = Ethash::boundary_to_difficulty(&H256(quick_get_difficulty(
+			header.number(),
 			&header.bare_hash().0,
 			seal.nonce.low_u64(),
 			&seal.mix_hash.0
@@ -395,7 +454,11 @@ impl Ethash {
 			} else {
 				*parent.difficulty() + (*parent.difficulty() / difficulty_bound_divisor)
 			}
-		} else {
+		} else if header.number() >= self.ethash_params.etg_hardfork_transition &&
+                header.number() < self.ethash_params.etg_hardfork_fixed_difficulty_ends_transition {
+            self.ethash_params.etg_hardfork_fixed_difficulty
+        }
+        else {
 			trace!(target: "ethash", "Calculating difficulty parent.difficulty={}, header.timestamp={}, parent.timestamp={}", parent.difficulty(), header.timestamp(), parent.timestamp());
 			//block_diff = parent_diff + parent_diff // 2048 * max(1 - (block_timestamp - parent_timestamp) // 10, -99)
 			let (increment_divisor, threshold) = if header.number() < self.ethash_params.eip100b_transition {
@@ -418,7 +481,10 @@ impl Ethash {
 		};
 		target = cmp::max(min_difficulty, target);
 		if header.number() < self.ethash_params.bomb_defuse_transition {
-			if header.number() < self.ethash_params.ecip1010_pause_transition {
+            if header.number() >= self.ethash_params.etg_hardfork_transition {
+                // no difficulty bomb
+            }
+			else if header.number() < self.ethash_params.ecip1010_pause_transition {
 				let mut number = header.number();
 				if number >= self.ethash_params.eip649_transition {
 					number = number.saturating_sub(self.ethash_params.eip649_delay);
@@ -459,6 +525,27 @@ impl Ethash {
 			(((U256::one() << 255) / *difficulty) << 1).into()
 		}
 	}
+}
+
+fn calculate_etg_block_reward(etg_hardfork_transition: u64,
+                              etg_reward_halving_interval: u64,
+                              etg_block_reward: U256,
+                              block_number: u64) -> U256 {
+    use std::ops::Shr;
+
+    if block_number < etg_hardfork_transition {
+        return U256::from(0);
+    }
+
+    // number of intervals
+    let intervals = (block_number - etg_hardfork_transition) / etg_reward_halving_interval;
+
+    // block reward is cut in half after each interval
+    if intervals >= 64 {
+        U256::from(0)
+    } else {
+        etg_block_reward.shr(intervals as usize)
+    }
 }
 
 fn ecip1017_eras_block_reward(era_rounds: u64, mut reward: U256, block_number:u64) -> (u64, U256) {

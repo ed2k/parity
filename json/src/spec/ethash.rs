@@ -58,6 +58,20 @@ pub struct EthashParams {
 	#[serde(rename="daoHardforkAccounts")]
 	pub dao_hardfork_accounts: Option<Vec<Address>>,
 
+    /// See main EthashParams docs.
+    #[serde(rename="etgHardforkTransition")]
+    pub etg_hardfork_transition: Option<Uint>,
+    #[serde(rename="etgHardforkDevAccounts")]
+    pub etg_hardfork_dev_accounts: Option<Vec<Address>>,
+    #[serde(rename="etgHardforkBlockReward")]
+    pub etg_hardfork_block_reward: Option<Uint>,
+    #[serde(rename="etgHardforkBlockRewardHalvingInterval")]
+    pub etg_hardfork_block_reward_halving_interval: Option<Uint>,
+    #[serde(rename="etgHardforkFixedDifficultyEndsTransition")]
+    pub etg_hardfork_fixed_difficulty_ends_transition: Option<Uint>,
+    #[serde(rename="etgHardforkFixedDifficulty")]
+    pub etg_hardfork_fixed_difficulty: Option<Uint>,
+
 	/// See main EthashParams docs.
 	#[serde(rename="difficultyHardforkTransition")]
 	pub difficulty_hardfork_transition: Option<Uint>,

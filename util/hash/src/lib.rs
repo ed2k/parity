@@ -32,6 +32,13 @@ pub const KECCAK_NULL_RLP: H256 = H256( [0x56, 0xe8, 0x1f, 0x17, 0x1b, 0xcc, 0x5
 /// The KECCAK of the RLP encoding of empty list.
 pub const KECCAK_EMPTY_LIST_RLP: H256 = H256( [0x1d, 0xcc, 0x4d, 0xe8, 0xde, 0xc7, 0x5d, 0x7a, 0xab, 0x85, 0xb5, 0x67, 0xb6, 0xcc, 0xd4, 0x1a, 0xd3, 0x12, 0x45, 0x1b, 0x94, 0x8a, 0x74, 0x13, 0xf0, 0xa1, 0x42, 0xfd, 0x40, 0xd4, 0x93, 0x47] );
 
+extern {
+    pub fn get_block_progpow_hash(header: *const [u8; 32],
+                                  nonce: u64, out: *mut [u8; 64]) -> i32;
+	pub fn get_from_mix(header: *const [u8; 32], nonce: u64,
+	  mix: *const [u8;32], out: *mut [u8; 32]) -> i32;
+    pub fn create_light_cache(epoch: u32);
+}
 
 pub fn keccak<T: AsRef<[u8]>>(s: T) -> H256 {
 	let mut result = [0u8; 32];
@@ -94,6 +101,9 @@ mod tests {
 	use std::io::{Write, BufReader};
 	use self::tempdir::TempDir;
 	use super::{keccak, write_keccak, keccak_buffer, KECCAK_EMPTY};
+    use create_light_cache;
+	use get_block_progpow_hash;
+	use get_from_mix;
 
 	#[test]
 	fn keccak_empty() {
@@ -139,4 +149,25 @@ mod tests {
 		// then
 		assert_eq!(format!("{:x}", hash), "68371d7e884c168ae2022c82bd837d51837718a7f7dfb7aa3f753074a35e1d87");
 	}
+
+	#[test]
+	fn santify_progpow() {
+		let header = [0; 32];
+		let mut out = [0; 64];
+		let _ = unsafe {
+			create_light_cache(486382/30000);
+			get_block_progpow_hash(&header, 0x123, &mut out)
+		}; 		
+	}
+
+	#[test]
+	fn santify_quick_progpow() {
+		let header = [0; 32];
+		let mix = [0;32];
+		let mut out = [0; 32];
+		let _ = unsafe {
+			get_from_mix(&header, 0x123, &mix, &mut out)
+		}; 		
+	}
+
 }
