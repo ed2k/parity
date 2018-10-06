@@ -69,10 +69,10 @@ impl Light {
 	/// `nonce` - The nonce to pack into the mix
 	pub fn compute(&self, block_number: u64, header_hash: &H256, nonce: u64) -> ProofOfWork {
 		if block_number > PROGPOW_START {
-			println!("light_progpow at {} {:x}", block_number, nonce);
+			trace!("light_progpow at {} {:x}", block_number, nonce);
 			light_progpow(self, header_hash, nonce)
 		} else {
-			println!("light_compute at {} {:x}", block_number, nonce);
+			trace!("light_compute at {} {:x}", block_number, nonce);
 			light_compute(self, header_hash, nonce)
 		}
 	}
@@ -158,7 +158,7 @@ pub fn light_compute(light: &Light, header_hash: &H256, nonce: u64) -> ProofOfWo
 
 pub fn light_progpow(light: &Light, header_hash: &H256, nonce: u64) -> ProofOfWork {
 	// just in case light cache is not created before
-	println!("enter light_progpow bn {}", light.block_number);
+	trace!("enter light_progpow bn {}", light.block_number);
 	unsafe { create_light_cache((light.block_number/30000) as u32); }
 
 	let mut out = [0; 64];
