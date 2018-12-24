@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -19,14 +19,14 @@ use rand::random;
 use hash::write_keccak;
 use mio::tcp::*;
 use ethereum_types::{H256, H520};
-use ethcore_bytes::Bytes;
+use parity_bytes::Bytes;
 use rlp::{Rlp, RlpStream};
-use connection::{Connection};
+use connection::Connection;
 use node_table::NodeId;
 use io::{IoContext, StreamToken};
 use ethkey::{KeyPair, Public, Secret, recover, sign, Generator, Random};
 use ethkey::crypto::{ecdh, ecies};
-use network::{Error, ErrorKind, HostInfo as HostInfoTrait};
+use network::{Error, ErrorKind};
 use host::HostInfo;
 
 #[derive(PartialEq, Eq, Debug)]
@@ -45,7 +45,7 @@ enum HandshakeState {
 	StartSession,
 }
 
-/// `RLPx` protocol handhake. See https://github.com/ethereum/devp2p/blob/master/rlpx.md#encrypted-handshake
+/// `RLPx` protocol handshake. See https://github.com/ethereum/devp2p/blob/master/rlpx.md#encrypted-handshake
 pub struct Handshake {
 	/// Remote node public key
 	pub id: NodeId,
@@ -65,12 +65,10 @@ pub struct Handshake {
 	pub remote_nonce: H256,
 	/// Remote `RLPx` protocol version.
 	pub remote_version: u64,
-	/// A copy of received encryped auth packet
+	/// A copy of received encrypted auth packet
 	pub auth_cipher: Bytes,
-	/// A copy of received encryped ack packet
+	/// A copy of received encrypted ack packet
 	pub ack_cipher: Bytes,
-	/// This Handshake is marked for deleteion flag
-	pub expired: bool,
 }
 
 const V4_AUTH_PACKET_SIZE: usize = 307;
@@ -84,27 +82,21 @@ impl Handshake {
 	/// Create a new handshake object
 	pub fn new(token: StreamToken, id: Option<&NodeId>, socket: TcpStream, nonce: &H256) -> Result<Handshake, Error> {
 		Ok(Handshake {
-			id: if let Some(id) = id { id.clone()} else { NodeId::new() },
+			id: if let Some(id) = id { *id } else { NodeId::new() },
 			connection: Connection::new(token, socket),
 			originated: false,
 			state: HandshakeState::New,
 			ecdhe: Random.generate()?,
-			nonce: nonce.clone(),
+			nonce: *nonce,
 			remote_ephemeral: Public::new(),
 			remote_nonce: H256::new(),
 			remote_version: PROTOCOL_VERSION,
 			auth_cipher: Bytes::new(),
 			ack_cipher: Bytes::new(),
-			expired: false,
 		})
 	}
 
-	/// Check if this handshake is expired.
-	pub fn expired(&self) -> bool {
-		self.expired
-	}
-
-	/// Start a handhsake
+	/// Start a handshake
 	pub fn start<Message>(&mut self, io: &IoContext<Message>, host: &HostInfo, originated: bool) -> Result<(), Error> where Message: Send + Clone+ Sync + 'static {
 		self.originated = originated;
 		io.register_timer(self.connection.token, HANDSHAKE_TIMEOUT).ok();
@@ -125,38 +117,34 @@ impl Handshake {
 
 	/// Readable IO handler. Drives the state change.
 	pub fn readable<Message>(&mut self, io: &IoContext<Message>, host: &HostInfo) -> Result<(), Error> where Message: Send + Clone + Sync + 'static {
-		if !self.expired() {
-			while let Some(data) = self.connection.readable()? {
-				match self.state {
-					HandshakeState::New => {},
-					HandshakeState::StartSession => {},
-					HandshakeState::ReadingAuth => {
-						self.read_auth(io, host.secret(), &data)?;
-					},
-					HandshakeState::ReadingAuthEip8 => {
-						self.read_auth_eip8(io, host.secret(), &data)?;
-					},
-					HandshakeState::ReadingAck => {
-						self.read_ack(host.secret(), &data)?;
-					},
-					HandshakeState::ReadingAckEip8 => {
-						self.read_ack_eip8(host.secret(), &data)?;
-					},
-				}
-				if self.state == HandshakeState::StartSession {
-					io.clear_timer(self.connection.token).ok();
-					break;
-				}
+		while let Some(data) = self.connection.readable()? {
+			match self.state {
+				HandshakeState::New => {},
+				HandshakeState::StartSession => {},
+				HandshakeState::ReadingAuth => {
+					self.read_auth(io, host.secret(), &data)?;
+				},
+				HandshakeState::ReadingAuthEip8 => {
+					self.read_auth_eip8(io, host.secret(), &data)?;
+				},
+				HandshakeState::ReadingAck => {
+					self.read_ack(host.secret(), &data)?;
+				},
+				HandshakeState::ReadingAckEip8 => {
+					self.read_ack_eip8(host.secret(), &data)?;
+				},
+			}
+			if self.state == HandshakeState::StartSession {
+				io.clear_timer(self.connection.token).ok();
+				break;
 			}
 		}
 		Ok(())
 	}
 
-	/// Writabe IO handler.
+	/// Writable IO handler.
 	pub fn writable<Message>(&mut self, io: &IoContext<Message>) -> Result<(), Error> where Message: Send + Clone + Sync + 'static {
-		if !self.expired() {
-			self.connection.writable(io)?;
-		}
+		self.connection.writable(io)?;
 		Ok(())
 	}
 
@@ -166,7 +154,7 @@ impl Handshake {
 		self.remote_version = remote_version;
 		let shared = *ecdh::agree(host_secret, &self.id)?;
 		let signature = H520::from_slice(sig);
-		self.remote_ephemeral = recover(&signature.into(), &(&shared ^ &self.remote_nonce))?;
+		self.remote_ephemeral = recover(&signature.into(), &(shared ^ self.remote_nonce))?;
 		Ok(())
 	}
 
@@ -189,7 +177,7 @@ impl Handshake {
 			}
 			Err(_) => {
 				// Try to interpret as EIP-8 packet
-				let total = (((data[0] as u16) << 8 | (data[1] as u16)) as usize) + 2;
+				let total = ((u16::from(data[0]) << 8 | (u16::from(data[1]))) as usize) + 2;
 				if total < V4_AUTH_PACKET_SIZE {
 					debug!(target: "network", "Wrong EIP8 auth packet size");
 					return Err(ErrorKind::BadProtocol.into());
@@ -232,7 +220,7 @@ impl Handshake {
 			}
 			Err(_) => {
 				// Try to interpret as EIP-8 packet
-				let total = (((data[0] as u16) << 8 | (data[1] as u16)) as usize) + 2;
+				let total = (((u16::from(data[0])) << 8 | (u16::from(data[1]))) as usize) + 2;
 				if total < V4_ACK_PACKET_SIZE {
 					debug!(target: "network", "Wrong EIP8 ack packet size");
 					return Err(ErrorKind::BadProtocol.into());
@@ -271,7 +259,7 @@ impl Handshake {
 
 			// E(remote-pubk, S(ecdhe-random, ecdh-shared-secret^nonce) || H(ecdhe-random-pubk) || pubk || nonce || 0x0)
 			let shared = *ecdh::agree(secret, &self.id)?;
-			sig.copy_from_slice(&*sign(self.ecdhe.secret(), &(&shared ^ &self.nonce))?);
+			sig.copy_from_slice(&*sign(self.ecdhe.secret(), &(shared ^ self.nonce))?);
 			write_keccak(self.ecdhe.public(), hepubk);
 			pubk.copy_from_slice(public);
 			nonce.copy_from_slice(&self.nonce);
@@ -515,4 +503,3 @@ mod test {
 		check_ack(&h, 57);
 	}
 }
-

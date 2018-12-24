@@ -25,7 +25,7 @@ use std::time::{Instant, Duration};
 use atty;
 use ethcore::client::{
 	BlockId, BlockChainClient, ChainInfo, BlockInfo, BlockChainInfo,
-	BlockQueueInfo, ChainNotify, ChainRoute, ClientReport, Client, ClientIoMessage
+	BlockQueueInfo, ChainNotify, NewBlocks, ClientReport, Client, ClientIoMessage
 };
 use ethcore::header::BlockNumber;
 use ethcore::snapshot::{RestorationStatus, SnapshotService as SS};
@@ -35,10 +35,9 @@ use io::{TimerToken, IoContext, IoHandler};
 use light::Cache as LightDataCache;
 use light::client::{LightChainClient, LightChainNotify};
 use number_prefix::{binary_prefix, Standalone, Prefixed};
-use parity_rpc::{is_major_importing};
+use parity_rpc::is_major_importing_or_waiting;
 use parity_rpc::informant::RpcStats;
 use ethereum_types::H256;
-use bytes::Bytes;
 use parking_lot::{RwLock, Mutex};
 
 /// Format byte counts to standard denominations.
@@ -128,7 +127,7 @@ impl InformantData for FullNodeInformantData {
 
 	fn is_major_importing(&self) -> bool {
 		let state = self.sync.as_ref().map(|sync| sync.status().state);
-		is_major_importing(state, self.client.queue_info())
+		is_major_importing_or_waiting(state, self.client.queue_info(), false)
 	}
 
 	fn report(&self) -> Report {
@@ -142,23 +141,24 @@ impl InformantData for FullNodeInformantData {
 		cache_sizes.insert("queue", queue_info.mem_used);
 		cache_sizes.insert("chain", blockchain_cache_info.total());
 
-		let (importing, sync_info) = match (self.sync.as_ref(), self.net.as_ref()) {
+		let importing = self.is_major_importing();
+		let sync_info = match (self.sync.as_ref(), self.net.as_ref()) {
 			(Some(sync), Some(net)) => {
 				let status = sync.status();
-				let net_config = net.network_config();
+				let num_peers_range = net.num_peers_range();
+				debug_assert!(num_peers_range.end > num_peers_range.start);
 
 				cache_sizes.insert("sync", status.mem_used);
 
-				let importing = is_major_importing(Some(status.state), queue_info.clone());
-				(importing, Some(SyncInfo {
+				Some(SyncInfo {
 					last_imported_block_number: status.last_imported_block_number.unwrap_or(chain_info.best_block_number),
 					last_imported_old_block_number: status.last_imported_old_block_number,
 					num_peers: status.num_peers,
-					max_peers: status.current_max_peers(net_config.min_peers, net_config.max_peers),
+					max_peers: status.current_max_peers(num_peers_range.start, num_peers_range.end - 1),
 					snapshot_sync: status.is_snapshot_syncing(),
-				}))
+				})
 			}
-			_ => (is_major_importing(self.sync.as_ref().map(|s| s.status().state), queue_info.clone()), None),
+			_ => None
 		};
 
 		Report {
@@ -255,16 +255,13 @@ impl<T: InformantData> Informant<T> {
 	}
 
 	pub fn tick(&self) {
-		let elapsed = self.last_tick.read().elapsed();
-		if elapsed < Duration::from_secs(5) {
-			return;
-		}
+		let now = Instant::now();
+		let elapsed = now.duration_since(*self.last_tick.read());
 
 		let (client_report, full_report) = {
 			let mut last_report = self.last_report.lock();
 			let full_report = self.target.report();
 			let diffed = full_report.client_report.clone() - &*last_report;
-			*last_report = full_report.client_report.clone();
 			(diffed, full_report)
 		};
 
@@ -288,7 +285,8 @@ impl<T: InformantData> Informant<T> {
 			return;
 		}
 
-		*self.last_tick.write() = Instant::now();
+		*self.last_tick.write() = now;
+		*self.last_report.lock() = full_report.client_report.clone();
 
 		let paint = |c: Style, t: String| match self.with_color && atty::is(atty::Stream::Stdout) {
 			true => format!("{}", c.paint(t)),
@@ -303,9 +301,9 @@ impl<T: InformantData> Informant<T> {
 						paint(White.bold(), format!("{}", chain_info.best_block_hash)),
 						if self.target.executes_transactions() {
 							format!("{} blk/s {} tx/s {} Mgas/s",
-								paint(Yellow.bold(), format!("{:5.2}", (client_report.blocks_imported * 1000) as f64 / elapsed.as_milliseconds() as f64)),
+								paint(Yellow.bold(), format!("{:7.2}", (client_report.blocks_imported * 1000) as f64 / elapsed.as_milliseconds() as f64)),
 								paint(Yellow.bold(), format!("{:6.1}", (client_report.transactions_applied * 1000) as f64 / elapsed.as_milliseconds() as f64)),
-								paint(Yellow.bold(), format!("{:4}", (client_report.gas_processed / From::from(elapsed.as_milliseconds() * 1000)).low_u64()))
+								paint(Yellow.bold(), format!("{:6.1}", (client_report.gas_processed / 1000).low_u64() as f64 / elapsed.as_milliseconds() as f64))
 							)
 						} else {
 							format!("{} hdr/s",
@@ -334,7 +332,13 @@ impl<T: InformantData> Informant<T> {
 			match sync_info.as_ref() {
 				Some(ref sync_info) => format!("{}{}/{} peers",
 					match importing {
-						true => format!("{}   ", paint(Green.bold(), format!("{:>8}", format!("#{}", sync_info.last_imported_block_number)))),
+						true => format!("{}",
+							if self.target.executes_transactions() {
+								paint(Green.bold(), format!("{:>8}   ", format!("#{}", sync_info.last_imported_block_number)))
+							} else {
+								String::new()
+							}
+						),
 						false => match sync_info.last_imported_old_block_number {
 							Some(number) => format!("{}   ", paint(Yellow.bold(), format!("{:>8}", format!("#{}", number)))),
 							None => String::new(),
@@ -360,29 +364,30 @@ impl<T: InformantData> Informant<T> {
 }
 
 impl ChainNotify for Informant<FullNodeInformantData> {
-	fn new_blocks(&self, imported: Vec<H256>, _invalid: Vec<H256>, _route: ChainRoute, _sealed: Vec<H256>, _proposed: Vec<Bytes>, duration: Duration) {
+	fn new_blocks(&self, new_blocks: NewBlocks) {
+		if new_blocks.has_more_blocks_to_import { return }
 		let mut last_import = self.last_import.lock();
 		let client = &self.target.client;
 
 		let importing = self.target.is_major_importing();
 		let ripe = Instant::now() > *last_import + Duration::from_secs(1) && !importing;
-		let txs_imported = imported.iter()
-			.take(imported.len().saturating_sub(if ripe { 1 } else { 0 }))
+		let txs_imported = new_blocks.imported.iter()
+			.take(new_blocks.imported.len().saturating_sub(if ripe { 1 } else { 0 }))
 			.filter_map(|h| client.block(BlockId::Hash(*h)))
 			.map(|b| b.transactions_count())
 			.sum();
 
 		if ripe {
-			if let Some(block) = imported.last().and_then(|h| client.block(BlockId::Hash(*h))) {
+			if let Some(block) = new_blocks.imported.last().and_then(|h| client.block(BlockId::Hash(*h))) {
 				let header_view = block.header_view();
 				let size = block.rlp().as_raw().len();
-				let (skipped, skipped_txs) = (self.skipped.load(AtomicOrdering::Relaxed) + imported.len() - 1, self.skipped_txs.load(AtomicOrdering::Relaxed) + txs_imported);
+				let (skipped, skipped_txs) = (self.skipped.load(AtomicOrdering::Relaxed) + new_blocks.imported.len() - 1, self.skipped_txs.load(AtomicOrdering::Relaxed) + txs_imported);
 				info!(target: "import", "Imported {} {} ({} txs, {} Mgas, {} ms, {} KiB){}",
 					Colour::White.bold().paint(format!("#{}", header_view.number())),
 					Colour::White.bold().paint(format!("{}", header_view.hash())),
 					Colour::Yellow.bold().paint(format!("{}", block.transactions_count())),
 					Colour::Yellow.bold().paint(format!("{:.2}", header_view.gas_used().low_u64() as f32 / 1000000f32)),
-					Colour::Purple.bold().paint(format!("{}", duration.as_milliseconds())),
+					Colour::Purple.bold().paint(format!("{}", new_blocks.duration.as_milliseconds())),
 					Colour::Blue.bold().paint(format!("{:.2}", size as f32 / 1024f32)),
 					if skipped > 0 {
 						format!(" + another {} block(s) containing {} tx(s)",
@@ -398,7 +403,7 @@ impl ChainNotify for Informant<FullNodeInformantData> {
 				*last_import = Instant::now();
 			}
 		} else {
-			self.skipped.fetch_add(imported.len(), AtomicOrdering::Relaxed);
+			self.skipped.fetch_add(new_blocks.imported.len(), AtomicOrdering::Relaxed);
 			self.skipped_txs.fetch_add(txs_imported, AtomicOrdering::Relaxed);
 		}
 	}
@@ -415,15 +420,15 @@ impl LightChainNotify for Informant<LightNodeInformantData> {
 		if ripe {
 			if let Some(header) = good.last().and_then(|h| client.block_header(BlockId::Hash(*h))) {
 				info!(target: "import", "Imported {} {} ({} Mgas){}",
-					  Colour::White.bold().paint(format!("#{}", header.number())),
-					  Colour::White.bold().paint(format!("{}", header.hash())),
-					  Colour::Yellow.bold().paint(format!("{:.2}", header.gas_used().low_u64() as f32  / 1000000f32)),
-					  if good.len() > 1 {
-						  format!(" + another {} header(s)",
-								  Colour::Red.bold().paint(format!("{}", good.len() - 1)))
-					  } else {
-						  String::new()
-					  }
+					Colour::White.bold().paint(format!("#{}", header.number())),
+					Colour::White.bold().paint(format!("{}", header.hash())),
+					Colour::Yellow.bold().paint(format!("{:.2}", header.gas_used().low_u64() as f32 / 1000000f32)),
+					if good.len() > 1 {
+						format!(" + another {} header(s)",
+								Colour::Red.bold().paint(format!("{}", good.len() - 1)))
+					} else {
+						String::new()
+					}
 				);
 				*last_import = Instant::now();
 			}

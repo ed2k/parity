@@ -26,19 +26,6 @@ usage! {
 		// Arguments must start with arg_
 		// Flags must start with flag_
 
-		CMD cmd_ui {
-			"Manage ui",
-		}
-
-		CMD cmd_dapp
-		{
-			"Manage dapps",
-
-			ARG arg_dapp_path: (Option<String>) = None,
-			"<PATH>",
-			"Path to the dapps",
-		}
-
 		CMD cmd_daemon
 		{
 			"Use Parity as a daemon",
@@ -53,16 +40,16 @@ usage! {
 			"Manage accounts",
 
 			CMD cmd_account_new {
-				"Create a new acount",
+				"Create a new account (and its associated key) for the given --chain (default: mainnet)",
 			}
 
 			CMD cmd_account_list {
-				"List existing accounts",
+				"List existing accounts of the given --chain (default: mainnet)",
 			}
 
 			CMD cmd_account_import
 			{
-				"Import account",
+				"Import accounts from JSON UTC keystore files to the specified --chain (default mainnet)",
 
 				ARG arg_account_import_path : (Option<Vec<String>>) = None,
 				"<PATH>...",
@@ -76,7 +63,7 @@ usage! {
 
 			CMD cmd_wallet_import
 			{
-				"Import wallet",
+				"Import wallet into the given --chain (default: mainnet)",
 
 				ARG arg_wallet_import_path: (Option<String>) = None,
 				"<PATH>",
@@ -86,7 +73,7 @@ usage! {
 
 		CMD cmd_import
 		{
-			"Import blockchain",
+			"Import blockchain data from a file to the given --chain database (default: mainnet)",
 
 			ARG arg_import_format: (Option<String>) = None,
 			"--format=[FORMAT]",
@@ -103,7 +90,7 @@ usage! {
 
 			CMD cmd_export_blocks
 			{
-				"Export blocks",
+				"Export the blockchain blocks from the given --chain database (default: mainnet) into a file. This command requires the chain to be synced with --fat-db on.",
 
 				ARG arg_export_blocks_format: (Option<String>) = None,
 				"--format=[FORMAT]",
@@ -124,7 +111,7 @@ usage! {
 
 			CMD cmd_export_state
 			{
-				"Export state",
+				"Export the blockchain state from the given --chain (default: mainnet) into a file. This command requires the chain to be synced with --fat-db on.",
 
 				FLAG flag_export_state_no_storage: (bool) = false,
 				"--no-storage",
@@ -161,11 +148,11 @@ usage! {
 			"Manage signer",
 
 			CMD cmd_signer_new_token {
-				"Generate new token",
+				"Generate a new signer-authentication token for the given --chain (default: mainnet)",
 			}
 
 			CMD cmd_signer_list {
-				"List",
+				"List the signer-authentication tokens from given --chain (default: mainnet)",
 			}
 
 			CMD cmd_signer_sign
@@ -189,7 +176,7 @@ usage! {
 
 		CMD cmd_snapshot
 		{
-			"Make a snapshot of the database",
+			"Make a snapshot of the database of the given --chain (default: mainnet)",
 
 			ARG arg_snapshot_at: (String) = "latest",
 			"--at=[BLOCK]",
@@ -202,7 +189,7 @@ usage! {
 
 		CMD cmd_restore
 		{
-			"Restore database from snapshot",
+			"Restore the database of the given --chain (default: mainnet) from a snapshot file",
 
 			ARG arg_restore_file: (Option<String>) = None,
 			"[FILE]",
@@ -215,7 +202,7 @@ usage! {
 
 			CMD cmd_tools_hash
 			{
-				"Hash a file",
+				"Hash a file using the Keccak-256 algorithm",
 
 				ARG arg_tools_hash_file: (Option<String>) = None,
 				"<FILE>",
@@ -228,22 +215,29 @@ usage! {
 			"Manage the database representing the state of the blockchain on this system",
 
 			CMD cmd_db_kill {
-				"Clean the database",
+				"Clean the database of the given --chain (default: mainnet)",
 			}
 		}
 
 		CMD cmd_export_hardcoded_sync
 		{
-			"Export the hardcoded sync JSON file from the existing light client database",
+			"Print the hashed light clients headers of the given --chain (default: mainnet) in a JSON format. To be used as hardcoded headers in a genesis file.",
+		}
+
+		// CMD removed in 2.0
+
+		CMD cmd_dapp
+		{
+			"Manage dapps",
+
+			ARG arg_dapp_path: (Option<String>) = None,
+			"<PATH>",
+			"Path to the dapps",
 		}
 	}
 	{
 		// Global flags and arguments
 		["Operating Options"]
-			FLAG flag_public_node: (bool) = false, or |c: &Config| c.parity.as_ref()?.public_node.clone(),
-			"--public-node",
-			"Start Parity as a public web server. Account storage and transaction signing will be delegated to the UI.",
-
 			FLAG flag_no_download: (bool) = false, or |c: &Config| c.parity.as_ref()?.no_download.clone(),
 			"--no-download",
 			"Normally new releases will be downloaded ready for updating. This disables it. Not recommended.",
@@ -266,7 +260,7 @@ usage! {
 
 			ARG arg_mode: (String) = "last", or |c: &Config| c.parity.as_ref()?.mode.clone(),
 			"--mode=[MODE]",
-			"Set the operating mode. MODE can be one of: last - Uses the last-used mode, active if none; active - Parity continuously syncs the chain; passive - Parity syncs initially, then sleeps and wakes regularly to resync; dark - Parity syncs only when the RPC is active; offline - Parity doesn't sync.",
+			"Set the operating mode. MODE can be one of: last - Uses the last-used mode, active if none; active - Parity continuously syncs the chain; passive - Parity syncs initially, then sleeps and wakes regularly to resync; dark - Parity syncs only when the JSON-RPC is active; offline - Parity doesn't sync.",
 
 			ARG arg_mode_timeout: (u64) = 300u64, or |c: &Config| c.parity.as_ref()?.mode_timeout.clone(),
 			"--mode-timeout=[SECS]",
@@ -294,7 +288,7 @@ usage! {
 
 			ARG arg_chain: (String) = "etg", or |c: &Config| c.parity.as_ref()?.chain.clone(),
 			"--chain=[CHAIN]",
-			"Specify the blockchain type. CHAIN may be either a JSON chain specification file or olympic, frontier, homestead, mainnet, morden, ropsten, classic, expanse, musicoin, ellaism, easthub, social, testnet, kovan or dev.",
+			"Specify the blockchain type. CHAIN may be either a JSON chain specification file or ethereum, classic, poacore, tobalaba, expanse, musicoin, ellaism, easthub, social, mix, callisto, morden, ropsten, kovan, poasokol, testnet, or dev.",
 
 			ARG arg_keys_path: (String) = "$BASE/keys", or |c: &Config| c.parity.as_ref()?.keys_path.clone(),
 			"--keys-path=[PATH]",
@@ -312,7 +306,7 @@ usage! {
 			"--db-path=[PATH]",
 			"Specify the database directory path",
 
-		["Convenience options"]
+		["Convenience Options"]
 			FLAG flag_unsafe_expose: (bool) = false, or |c: &Config| c.misc.as_ref()?.unsafe_expose,
 			"--unsafe-expose",
 			"All servers will listen on external interfaces and will be remotely accessible. It's equivalent with setting the following: --[ws,jsonrpc,ui,ipfs-api,secretstore,stratum,dapps,secretstore-http]-interface=all --*-hosts=all    This option is UNSAFE and should be used with great care!",
@@ -323,16 +317,16 @@ usage! {
 
 			ARG arg_ports_shift: (u16) = 0u16, or |c: &Config| c.misc.as_ref()?.ports_shift,
 			"--ports-shift=[SHIFT]",
-			"Add SHIFT to all port numbers Parity is listening on. Includes network port and all servers (RPC, WebSockets, UI, IPFS, SecretStore).",
+			"Add SHIFT to all port numbers Parity is listening on. Includes network port and all servers (HTTP JSON-RPC, WebSockets JSON-RPC, IPFS, SecretStore).",
 
-		["Account options"]
+		["Account Options"]
 			FLAG flag_no_hardware_wallets: (bool) = false, or |c: &Config| c.account.as_ref()?.disable_hardware.clone(),
 			"--no-hardware-wallets",
 			"Disables hardware wallet support.",
 
 			FLAG flag_fast_unlock: (bool) = false, or |c: &Config| c.account.as_ref()?.fast_unlock.clone(),
 			"--fast-unlock",
-			"Use drasticly faster unlocking mode. This setting causes raw secrets to be stored unprotected in memory, so use with care.",
+			"Use drastically faster unlocking mode. This setting causes raw secrets to be stored unprotected in memory, so use with care.",
 
 			ARG arg_keys_iterations: (u32) = 10240u32, or |c: &Config| c.account.as_ref()?.keys_iterations.clone(),
 			"--keys-iterations=[NUM]",
@@ -344,13 +338,13 @@ usage! {
 
 			ARG arg_unlock: (Option<String>) = None, or |c: &Config| c.account.as_ref()?.unlock.as_ref().map(|vec| vec.join(",")),
 			"--unlock=[ACCOUNTS]",
-			"Unlock ACCOUNTS for the duration of the execution. ACCOUNTS is a comma-delimited list of addresses. Implies --no-ui.",
+			"Unlock ACCOUNTS for the duration of the execution. ACCOUNTS is a comma-delimited list of addresses.",
 
 			ARG arg_password: (Vec<String>) = Vec::new(), or |c: &Config| c.account.as_ref()?.password.clone(),
 			"--password=[FILE]...",
 			"Provide a file containing a password for unlocking an account. Leading and trailing whitespace is trimmed.",
 
-		["Private transactions options"]
+		["Private Transactions Options"]
 			FLAG flag_private_enabled: (bool) = false, or |c: &Config| c.private_tx.as_ref()?.enabled,
 			"--private-tx-enabled",
 			"Enable private transactions.",
@@ -379,37 +373,12 @@ usage! {
 			"--private-passwords=[FILE]...",
 			"Provide a file containing passwords for unlocking accounts (signer, private account, validators).",
 
-		["UI options"]
-			FLAG flag_force_ui: (bool) = false, or |c: &Config| c.ui.as_ref()?.force.clone(),
-			"--force-ui",
-			"Enable Trusted UI WebSocket endpoint, even when --unlock is in use.",
-
-			FLAG flag_no_ui: (bool) = false, or |c: &Config| c.ui.as_ref()?.disable.clone(),
-			"--no-ui",
-			"Disable Trusted UI WebSocket endpoint.",
-
-			// NOTE [todr] For security reasons don't put this to config files
-			FLAG flag_ui_no_validation: (bool) = false, or |_| None,
-			"--ui-no-validation",
-			"Disable Origin and Host headers validation for Trusted UI. WARNING: INSECURE. Used only for development.",
-
-			ARG arg_ui_interface: (String) = "local", or |c: &Config| c.ui.as_ref()?.interface.clone(),
-			"--ui-interface=[IP]",
-			"Specify the hostname portion of the Trusted UI server, IP should be an interface's IP address, or local.",
-
-			ARG arg_ui_hosts: (String) = "none", or |c: &Config| c.ui.as_ref()?.hosts.as_ref().map(|vec| vec.join(",")),
-			"--ui-hosts=[HOSTS]",
-			"List of allowed Host header values. This option will validate the Host header sent by the browser, it is additional security against some attack vectors. Special options: \"all\", \"none\",.",
-
+		["UI Options"]
 			ARG arg_ui_path: (String) = "$BASE/signer", or |c: &Config| c.ui.as_ref()?.path.clone(),
 			"--ui-path=[PATH]",
 			"Specify directory where Trusted UIs tokens should be stored.",
 
-			ARG arg_ui_port: (u16) = 8180u16, or |c: &Config| c.ui.as_ref()?.port.clone(),
-			"--ui-port=[PORT]",
-			"Specify the port of Trusted UI server.",
-
-		["Networking options"]
+		["Networking Options"]
 			FLAG flag_no_warp: (bool) = false, or |c: &Config| c.network.as_ref()?.warp.clone().map(|w| !w),
 			"--no-warp",
 			"Disable syncing from the snapshot over the network.",
@@ -437,6 +406,10 @@ usage! {
 			ARG arg_port: (u16) = 30303u16, or |c: &Config| c.network.as_ref()?.port.clone(),
 			"--port=[PORT]",
 			"Override the port on which the node should listen.",
+
+			ARG arg_interface: (String) = "all", or |c: &Config| c.network.as_ref()?.interface.clone(),
+			"--interface=[IP]",
+			"Network interfaces. Valid values are 'all', 'local' or the ip of the interface you want parity to listen to.",
 
 			ARG arg_min_peers: (Option<u16>) = None, or |c: &Config| c.network.as_ref()?.min_peers.clone(),
 			"--min-peers=[NUM]",
@@ -478,22 +451,45 @@ usage! {
 			"--reserved-peers=[FILE]",
 			"Provide a file containing enodes, one per line. These nodes will always have a reserved slot on top of the normal maximum peers.",
 
-		["API and console options – RPC"]
+			CHECK |args: &Args| {
+				if let (Some(max_peers), Some(min_peers)) = (args.arg_max_peers, args.arg_min_peers) {
+					if min_peers > max_peers {
+						return Err(ArgsError::PeerConfiguration);
+					}
+				}
+
+				Ok(())
+			},
+
+
+		["API and Console Options – HTTP JSON-RPC"]
+			FLAG flag_jsonrpc_allow_missing_blocks: (bool) = false, or |c: &Config| c.rpc.as_ref()?.allow_missing_blocks.clone(),
+			"--jsonrpc-allow-missing-blocks",
+			"RPC calls will return 'null' instead of an error if ancient block sync is still in progress and the block information requested could not be found",
+
 			FLAG flag_no_jsonrpc: (bool) = false, or |c: &Config| c.rpc.as_ref()?.disable.clone(),
 			"--no-jsonrpc",
-			"Disable the JSON-RPC API server.",
+			"Disable the HTTP JSON-RPC API server.",
+
+			FLAG flag_jsonrpc_no_keep_alive: (bool) = false, or |c: &Config| c.rpc.as_ref()?.keep_alive,
+			"--jsonrpc-no-keep-alive",
+			"Disable HTTP/1.1 keep alive header. Disabling keep alive will prevent re-using the same TCP connection to fire multiple requests, recommended when using one request per connection.",
+
+			FLAG flag_jsonrpc_experimental: (bool) = false, or |c: &Config| c.rpc.as_ref()?.experimental_rpcs.clone(),
+			"--jsonrpc-experimental",
+			"Enable experimental RPCs. Enable to have access to methods from unfinalised EIPs in all namespaces",
 
 			ARG arg_jsonrpc_port: (u16) = 8545u16, or |c: &Config| c.rpc.as_ref()?.port.clone(),
 			"--jsonrpc-port=[PORT]",
-			"Specify the port portion of the JSONRPC API server.",
+			"Specify the port portion of the HTTP JSON-RPC API server.",
 
-			ARG arg_jsonrpc_interface: (String)  = "local", or |c: &Config| c.rpc.as_ref()?.interface.clone(),
+			ARG arg_jsonrpc_interface: (String) = "local", or |c: &Config| c.rpc.as_ref()?.interface.clone(),
 			"--jsonrpc-interface=[IP]",
-			"Specify the hostname portion of the JSONRPC API server, IP should be an interface's IP address, or all (all interfaces) or local.",
+			"Specify the hostname portion of the HTTP JSON-RPC API server, IP should be an interface's IP address, or all (all interfaces) or local.",
 
 			ARG arg_jsonrpc_apis: (String) = "web3,eth,pubsub,net,parity,private,parity_pubsub,traces,rpc,shh,shh_pubsub", or |c: &Config| c.rpc.as_ref()?.apis.as_ref().map(|vec| vec.join(",")),
 			"--jsonrpc-apis=[APIS]",
-			"Specify the APIs available through the JSONRPC interface using a comma-delimited list of API names. Possible names are: all, safe, web3, net, eth, pubsub, personal, signer, parity, parity_pubsub, parity_accounts, parity_set, traces, rpc, secretstore, shh, shh_pubsub. You can also disable a specific API by putting '-' in the front, example: all,-personal. safe contains following apis: web3, net, eth, pubsub, parity, parity_pubsub, traces, rpc, shh, shh_pubsub",
+			"Specify the APIs available through the HTTP JSON-RPC interface using a comma-delimited list of API names. Possible names are: all, safe, debug, web3, net, eth, pubsub, personal, signer, parity, parity_pubsub, parity_accounts, parity_set, traces, rpc, secretstore, shh, shh_pubsub. You can also disable a specific API by putting '-' in the front, example: all,-personal. 'safe' enables the following APIs: web3, net, eth, pubsub, parity, parity_pubsub, traces, rpc, shh, shh_pubsub",
 
 			ARG arg_jsonrpc_hosts: (String) = "none", or |c: &Config| c.rpc.as_ref()?.hosts.as_ref().map(|vec| vec.join(",")),
 			"--jsonrpc-hosts=[HOSTS]",
@@ -501,32 +497,40 @@ usage! {
 
 			ARG arg_jsonrpc_threads: (usize) = 4usize, or |c: &Config| c.rpc.as_ref()?.processing_threads,
 			"--jsonrpc-threads=[THREADS]",
-			"Turn on additional processing threads in all RPC servers. Setting this to non-zero value allows parallel cpu-heavy queries execution.",
+			"Turn on additional processing threads for JSON-RPC servers (all transports). Setting this to a non-zero value allows parallel execution of cpu-heavy queries.",
 
 			ARG arg_jsonrpc_cors: (String) = "none", or |c: &Config| c.rpc.as_ref()?.cors.as_ref().map(|vec| vec.join(",")),
 			"--jsonrpc-cors=[URL]",
-			"Specify CORS header for JSON-RPC API responses. Special options: \"all\", \"none\".",
+			"Specify CORS header for HTTP JSON-RPC API responses. Special options: \"all\", \"none\".",
 
 			ARG arg_jsonrpc_server_threads: (Option<usize>) = None, or |c: &Config| c.rpc.as_ref()?.server_threads,
 			"--jsonrpc-server-threads=[NUM]",
 			"Enables multiple threads handling incoming connections for HTTP JSON-RPC server.",
 
-		["API and console options – WebSockets"]
+			ARG arg_jsonrpc_max_payload: (Option<usize>) = None, or |c: &Config| c.rpc.as_ref()?.max_payload,
+			"--jsonrpc-max-payload=[MB]",
+			"Specify maximum size for HTTP JSON-RPC requests in megabytes.",
+
+			ARG arg_poll_lifetime: (u32) = 60u32, or |c: &Config| c.rpc.as_ref()?.poll_lifetime.clone(),
+			"--poll-lifetime=[S]",
+			"Set the RPC filter lifetime to S seconds. The filter has to be polled at least every S seconds , otherwise it is removed.",
+
+		["API and Console Options – WebSockets"]
 			FLAG flag_no_ws: (bool) = false, or |c: &Config| c.websockets.as_ref()?.disable.clone(),
 			"--no-ws",
-			"Disable the WebSockets server.",
+			"Disable the WebSockets JSON-RPC server.",
 
 			ARG arg_ws_port: (u16) = 8546u16, or |c: &Config| c.websockets.as_ref()?.port.clone(),
 			"--ws-port=[PORT]",
-			"Specify the port portion of the WebSockets server.",
+			"Specify the port portion of the WebSockets JSON-RPC server.",
 
-			ARG arg_ws_interface: (String)  = "local", or |c: &Config| c.websockets.as_ref()?.interface.clone(),
+			ARG arg_ws_interface: (String) = "local", or |c: &Config| c.websockets.as_ref()?.interface.clone(),
 			"--ws-interface=[IP]",
-			"Specify the hostname portion of the WebSockets server, IP should be an interface's IP address, or all (all interfaces) or local.",
+			"Specify the hostname portion of the WebSockets JSON-RPC server, IP should be an interface's IP address, or all (all interfaces) or local.",
 
 			ARG arg_ws_apis: (String) = "web3,eth,pubsub,net,parity,parity_pubsub,private,traces,rpc,shh,shh_pubsub", or |c: &Config| c.websockets.as_ref()?.apis.as_ref().map(|vec| vec.join(",")),
 			"--ws-apis=[APIS]",
-			"Specify the APIs available through the WebSockets interface using a comma-delimited list of API names. Possible names are: all, safe, web3, net, eth, pubsub, personal, signer, parity, parity_pubsub, parity_accounts, parity_set, traces, rpc, secretstore, shh, shh_pubsub. You can also disable a specific API by putting '-' in the front, example: all,-personal. safe contains following apis: web3, net, eth, pubsub, parity, parity_pubsub, traces, rpc, shh, shh_pubsub",
+			"Specify the JSON-RPC APIs available through the WebSockets interface using a comma-delimited list of API names. Possible names are: all, safe, web3, net, eth, pubsub, personal, signer, parity, parity_pubsub, parity_accounts, parity_set, traces, rpc, secretstore, shh, shh_pubsub. You can also disable a specific API by putting '-' in the front, example: all,-personal. 'safe' enables the following APIs: web3, net, eth, pubsub, parity, parity_pubsub, traces, rpc, shh, shh_pubsub",
 
 			ARG arg_ws_origins: (String) = "parity://*,chrome-extension://*,moz-extension://*", or |c: &Config| c.websockets.as_ref()?.origins.as_ref().map(|vec| vec.join(",")),
 			"--ws-origins=[URL]",
@@ -538,9 +542,9 @@ usage! {
 
 			ARG arg_ws_max_connections: (usize) = 100usize, or |c: &Config| c.websockets.as_ref()?.max_connections,
 			"--ws-max-connections=[CONN]",
-			"Maximal number of allowed concurrent WS connections.",
+			"Maximum number of allowed concurrent WebSockets JSON-RPC connections.",
 
-		["API and console options – IPC"]
+		["API and Console Options – IPC"]
 			FLAG flag_no_ipc: (bool) = false, or |c: &Config| c.ipc.as_ref()?.disable.clone(),
 			"--no-ipc",
 			"Disable JSON-RPC over IPC service.",
@@ -551,18 +555,9 @@ usage! {
 
 			ARG arg_ipc_apis: (String) = "web3,eth,pubsub,net,parity,parity_pubsub,parity_accounts,private,traces,rpc,shh,shh_pubsub", or |c: &Config| c.ipc.as_ref()?.apis.as_ref().map(|vec| vec.join(",")),
 			"--ipc-apis=[APIS]",
-			"Specify custom API set available via JSON-RPC over IPC using a comma-delimited list of API names. Possible names are: all, safe, web3, net, eth, pubsub, personal, signer, parity, parity_pubsub, parity_accounts, parity_set, traces, rpc, secretstore, shh, shh_pubsub. You can also disable a specific API by putting '-' in the front, example: all,-personal. safe contains: web3, net, eth, pubsub, parity, parity_pubsub, traces, rpc, shh, shh_pubsub",
+			"Specify custom API set available via JSON-RPC over IPC using a comma-delimited list of API names. Possible names are: all, safe, web3, net, eth, pubsub, personal, signer, parity, parity_pubsub, parity_accounts, parity_set, traces, rpc, secretstore, shh, shh_pubsub. You can also disable a specific API by putting '-' in the front, example: all,-personal. 'safe' enables the following APIs: web3, net, eth, pubsub, parity, parity_pubsub, traces, rpc, shh, shh_pubsub",
 
-		["API and console options – Dapps"]
-			FLAG flag_no_dapps: (bool) = false, or |c: &Config| c.dapps.as_ref()?.disable.clone(),
-			"--no-dapps",
-			"Disable the Dapps server (e.g. status page).",
-
-			ARG arg_dapps_path: (String) = "$BASE/dapps", or |c: &Config| c.dapps.as_ref()?.path.clone(),
-			"--dapps-path=[PATH]",
-			"Specify directory where dapps should be installed.",
-
-		["API and console options – IPFS"]
+		["API and Console Options – IPFS"]
 			FLAG flag_ipfs_api: (bool) = false, or |c: &Config| c.ipfs.as_ref()?.enable.clone(),
 			"--ipfs-api",
 			"Enable IPFS-compatible HTTP API.",
@@ -583,7 +578,28 @@ usage! {
 			"--ipfs-api-cors=[URL]",
 			"Specify CORS header for IPFS API responses. Special options: \"all\", \"none\".",
 
-		["Secret store options"]
+		["Light Client Options"]
+			ARG arg_on_demand_response_time_window: (Option<u64>) = None, or |c: &Config| c.light.as_ref()?.on_demand_response_time_window,
+			"--on-demand-time-window=[S]",
+			"Specify the maximum time to wait for a successful response",
+
+			ARG arg_on_demand_request_backoff_start: (Option<u64>) = None, or |c: &Config| c.light.as_ref()?.on_demand_request_backoff_start,
+			"--on-demand-start-backoff=[S]",
+			"Specify light client initial backoff time for a request",
+
+			ARG arg_on_demand_request_backoff_max: (Option<u64>) = None, or |c: &Config| c.light.as_ref()?.on_demand_request_backoff_max,
+			"--on-demand-end-backoff=[S]",
+			"Specify light client maximum backoff time for a request",
+
+			ARG arg_on_demand_request_backoff_rounds_max: (Option<usize>) = None, or |c: &Config| c.light.as_ref()?.on_demand_request_backoff_rounds_max,
+			"--on-demand-max-backoff-rounds=[TIMES]",
+			"Specify light client maximum number of backoff iterations for a request",
+
+			ARG arg_on_demand_request_consecutive_failures: (Option<usize>) = None, or |c: &Config| c.light.as_ref()?.on_demand_request_consecutive_failures,
+			"--on-demand-consecutive-failures=[TIMES]",
+			"Specify light client the number of failures for a request until it gets exponentially backed off",
+
+		["Secret Store Options"]
 			FLAG flag_no_secretstore: (bool) = false, or |c: &Config| c.secretstore.as_ref()?.disable.clone(),
 			"--no-secretstore",
 			"Disable Secret Store functionality.",
@@ -592,37 +608,41 @@ usage! {
 			"--no-secretstore-http",
 			"Disable Secret Store HTTP API.",
 
- 			FLAG flag_no_secretstore_acl_check: (bool) = false, or |c: &Config| c.secretstore.as_ref()?.disable_acl_check.clone(),
-			"--no-acl-check",
-			"Disable ACL check (useful for test environments).",
-
 			FLAG flag_no_secretstore_auto_migrate: (bool) = false, or |c: &Config| c.secretstore.as_ref()?.disable_auto_migrate.clone(),
 			"--no-secretstore-auto-migrate",
 			"Do not run servers set change session automatically when servers set changes. This option has no effect when servers set is read from configuration file.",
 
-			ARG arg_secretstore_contract: (String) = "none", or |c: &Config| c.secretstore.as_ref()?.service_contract.clone(),
+			ARG arg_secretstore_acl_contract: (Option<String>) = Some("registry".into()), or |c: &Config| c.secretstore.as_ref()?.acl_contract.clone(),
+			"--secretstore-acl-contract=[SOURCE]",
+			"Secret Store permissioning contract address source: none, registry (contract address is read from 'secretstore_acl_checker' entry in registry) or address.",
+
+			ARG arg_secretstore_contract: (Option<String>) = None, or |c: &Config| c.secretstore.as_ref()?.service_contract.clone(),
 			"--secretstore-contract=[SOURCE]",
-			"Secret Store Service contract address source: none, registry (contract address is read from secretstore_service entry in registry) or address.",
+			"Secret Store Service contract address source: none, registry (contract address is read from 'secretstore_service' entry in registry) or address.",
 
-			ARG arg_secretstore_srv_gen_contract: (String) = "none", or |c: &Config| c.secretstore.as_ref()?.service_contract_srv_gen.clone(),
+			ARG arg_secretstore_srv_gen_contract: (Option<String>) = None, or |c: &Config| c.secretstore.as_ref()?.service_contract_srv_gen.clone(),
 			"--secretstore-srv-gen-contract=[SOURCE]",
-			"Secret Store Service server key generation contract address source: none, registry (contract address is read from secretstore_service_srv_gen entry in registry) or address.",
+			"Secret Store Service server key generation contract address source: none, registry (contract address is read from 'secretstore_service_srv_gen' entry in registry) or address.",
 
-			ARG arg_secretstore_srv_retr_contract: (String) = "none", or |c: &Config| c.secretstore.as_ref()?.service_contract_srv_retr.clone(),
+			ARG arg_secretstore_srv_retr_contract: (Option<String>) = None, or |c: &Config| c.secretstore.as_ref()?.service_contract_srv_retr.clone(),
 			"--secretstore-srv-retr-contract=[SOURCE]",
-			"Secret Store Service server key retrieval contract address source: none, registry (contract address is read from secretstore_service_srv_retr entry in registry) or address.",
+			"Secret Store Service server key retrieval contract address source: none, registry (contract address is read from 'secretstore_service_srv_retr' entry in registry) or address.",
 
-			ARG arg_secretstore_doc_store_contract: (String) = "none", or |c: &Config| c.secretstore.as_ref()?.service_contract_doc_store.clone(),
+			ARG arg_secretstore_doc_store_contract: (Option<String>) = None, or |c: &Config| c.secretstore.as_ref()?.service_contract_doc_store.clone(),
 			"--secretstore-doc-store-contract=[SOURCE]",
-			"Secret Store Service document key store contract address source: none, registry (contract address is read from secretstore_service_doc_store entry in registry) or address.",
+			"Secret Store Service document key store contract address source: none, registry (contract address is read from 'secretstore_service_doc_store' entry in registry) or address.",
 
-			ARG arg_secretstore_doc_sretr_contract: (String) = "none", or |c: &Config| c.secretstore.as_ref()?.service_contract_doc_sretr.clone(),
+			ARG arg_secretstore_doc_sretr_contract: (Option<String>) = None, or |c: &Config| c.secretstore.as_ref()?.service_contract_doc_sretr.clone(),
 			"--secretstore-doc-sretr-contract=[SOURCE]",
-			"Secret Store Service document key shadow retrieval contract address source: none, registry (contract address is read from secretstore_service_doc_sretr entry in registry) or address.",
+			"Secret Store Service document key shadow retrieval contract address source: none, registry (contract address is read from 'secretstore_service_doc_sretr' entry in registry) or address.",
 
 			ARG arg_secretstore_nodes: (String) = "", or |c: &Config| c.secretstore.as_ref()?.nodes.as_ref().map(|vec| vec.join(",")),
 			"--secretstore-nodes=[NODES]",
 			"Comma-separated list of other secret store cluster nodes in form NODE_PUBLIC_KEY_IN_HEX@NODE_IP_ADDR:NODE_PORT.",
+
+			ARG arg_secretstore_server_set_contract: (Option<String>) = Some("registry".into()), or |c: &Config| c.secretstore.as_ref()?.server_set_contract.clone(),
+			"--secretstore-server-set-contract=[SOURCE]",
+			"Secret Store server set contract address source: none, registry (contract address is read from 'secretstore_server_set' entry in registry) or address.",
 
 			ARG arg_secretstore_interface: (String) = "local", or |c: &Config| c.secretstore.as_ref()?.interface.clone(),
 			"--secretstore-interface=[IP]",
@@ -652,7 +672,7 @@ usage! {
 			"--secretstore-admin=[PUBLIC]",
 			"Hex-encoded public key of secret store administrator.",
 
-		["Sealing/Mining options"]
+		["Sealing/Mining Options"]
 			FLAG flag_force_sealing: (bool) = false, or |c: &Config| c.mining.as_ref()?.force_sealing.clone(),
 			"--force-sealing",
 			"Force the node to author new blocks as if it were always sealing/mining.",
@@ -664,6 +684,14 @@ usage! {
 			FLAG flag_remove_solved: (bool) = false, or |c: &Config| c.mining.as_ref()?.remove_solved.clone(),
 			"--remove-solved",
 			"Move solved blocks from the work package queue instead of cloning them. This gives a slightly faster import speed, but means that extra solutions submitted for the same work package will go unused.",
+
+			FLAG flag_tx_queue_no_unfamiliar_locals: (bool) = false, or |c: &Config| c.mining.as_ref()?.tx_queue_no_unfamiliar_locals.clone(),
+			"--tx-queue-no-unfamiliar-locals",
+			"Local transactions sent through JSON-RPC (HTTP, WebSockets, etc) will be treated as 'external' if the sending account is unknown.",
+
+			FLAG flag_tx_queue_no_early_reject: (bool) = false, or |c: &Config| c.mining.as_ref()?.tx_queue_no_early_reject.clone(),
+			"--tx-queue-no-early-reject",
+			"Disables transaction queue optimization to early reject transactions below minimal effective gas price. This allows local transactions to always enter the pool, despite it being full, but requires additional ecrecover on every transaction.",
 
 			FLAG flag_refuse_service_transactions: (bool) = false, or |c: &Config| c.mining.as_ref()?.refuse_service_transactions.clone(),
 			"--refuse-service-transactions",
@@ -713,11 +741,11 @@ usage! {
 			"--price-update-period=[T]",
 			"T will be allowed to pass between each gas price update. T may be daily, hourly, a number of seconds, or a time string of the form \"2 days\", \"30 minutes\" etc..",
 
-			ARG arg_gas_floor_target: (String) = "4700000", or |c: &Config| c.mining.as_ref()?.gas_floor_target.clone(),
+			ARG arg_gas_floor_target: (String) = "8000000", or |c: &Config| c.mining.as_ref()?.gas_floor_target.clone(),
 			"--gas-floor-target=[GAS]",
 			"Amount of gas per block to target when sealing a new block.",
 
-			ARG arg_gas_cap: (String) = "6283184", or |c: &Config| c.mining.as_ref()?.gas_cap.clone(),
+			ARG arg_gas_cap: (String) = "10000000", or |c: &Config| c.mining.as_ref()?.gas_cap.clone(),
 			"--gas-cap=[GAS]",
 			"A cap on how large we will raise the gas limit per block due to transaction volume.",
 
@@ -732,10 +760,6 @@ usage! {
 			ARG arg_tx_queue_per_sender: (Option<usize>) = None, or |c: &Config| c.mining.as_ref()?.tx_queue_per_sender.clone(),
 			"--tx-queue-per-sender=[LIMIT]",
 			"Maximum number of transactions per sender in the queue. By default it's 1% of the entire queue, but not less than 16.",
-
-			ARG arg_tx_queue_gas: (String) = "off", or |c: &Config| c.mining.as_ref()?.tx_queue_gas.clone(),
-			"--tx-queue-gas=[LIMIT]",
-			"Maximum amount of total gas for external transactions in the queue. LIMIT can be either an amount of gas or 'auto' or 'off'. 'auto' sets the limit to be 20x the current block gas limit.",
 
 			ARG arg_tx_queue_strategy: (String) = "gas_price", or |c: &Config| c.mining.as_ref()?.tx_queue_strategy.clone(),
 			"--tx-queue-strategy=[S]",
@@ -785,12 +809,16 @@ usage! {
 			"--stratum-secret=[STRING]",
 			"Secret for authorizing Stratum server for peers.",
 
+			ARG arg_max_round_blocks_to_import: (usize) = 12usize, or |c: &Config| c.mining.as_ref()?.max_round_blocks_to_import.clone(),
+			"--max-round-blocks-to-import=[S]",
+			"Maximal number of blocks to import for each import round.",
+
 		["Internal Options"]
 			FLAG flag_can_restart: (bool) = false, or |_| None,
 			"--can-restart",
 			"Executable will auto-restart if exiting with 69",
 
-		["Miscellaneous options"]
+		["Miscellaneous Options"]
 			FLAG flag_no_color: (bool) = false, or |c: &Config| c.misc.as_ref()?.color.map(|c| !c).clone(),
 			"--no-color",
 			"Don't use terminal color codes in output.",
@@ -803,23 +831,15 @@ usage! {
 			"--no-config",
 			"Don't load a configuration file.",
 
-			ARG arg_ntp_servers: (String) = "0.parity.pool.ntp.org:123,1.parity.pool.ntp.org:123,2.parity.pool.ntp.org:123,3.parity.pool.ntp.org:123", or |c: &Config| c.misc.as_ref()?.ntp_servers.clone().map(|vec| vec.join(",")),
-			"--ntp-servers=[HOSTS]",
-			"Comma separated list of NTP servers to provide current time (host:port). Used to verify node health. Parity uses pool.ntp.org NTP servers; consider joining the pool: http://www.pool.ntp.org/join.html",
-
 			ARG arg_logging: (Option<String>) = None, or |c: &Config| c.misc.as_ref()?.logging.clone(),
 			"-l, --logging=[LOGGING]",
-			"Specify the logging level. Must conform to the same format as RUST_LOG.",
+			"Specify the general logging level (error, warn, info, debug or trace). It can also be set for a specific module, example: '-l sync=debug,rpc=trace'",
 
 			ARG arg_log_file: (Option<String>) = None, or |c: &Config| c.misc.as_ref()?.log_file.clone(),
 			"--log-file=[FILENAME]",
 			"Specify a filename into which logging should be appended.",
 
-		["Footprint options"]
-			FLAG flag_fast_and_loose: (bool) = false, or |c: &Config| c.footprint.as_ref()?.fast_and_loose.clone(),
-			"--fast-and-loose",
-			"Disables DB WAL, which gives a significant speed up but means an unclean exit is unrecoverable.",
-
+		["Footprint Options"]
 			FLAG flag_scale_verifiers: (bool) = false, or |c: &Config| c.footprint.as_ref()?.scale_verifiers.clone(),
 			"--scale-verifiers",
 			"Automatically scale amount of verifier threads based on workload. Not guaranteed to be faster.",
@@ -846,7 +866,7 @@ usage! {
 
 			ARG arg_cache_size_blocks: (u32) = 8u32, or |c: &Config| c.footprint.as_ref()?.cache_size_blocks.clone(),
 			"--cache-size-blocks=[MB]",
-			"Specify the prefered size of the blockchain cache in megabytes.",
+			"Specify the preferred size of the blockchain cache in megabytes.",
 
 			ARG arg_cache_size_queue: (u32) = 40u32, or |c: &Config| c.footprint.as_ref()?.cache_size_queue.clone(),
 			"--cache-size-queue=[MB]",
@@ -872,17 +892,21 @@ usage! {
 			"--num-verifiers=[INT]",
 			"Amount of verifier threads to use or to begin with, if verifier auto-scaling is enabled.",
 
-		["Import/export options"]
+		["Import/export Options"]
 			FLAG flag_no_seal_check: (bool) = false, or |_| None,
 			"--no-seal-check",
 			"Skip block seal check.",
 
-		["Snapshot options"]
+		["Snapshot Options"]
 			FLAG flag_no_periodic_snapshot: (bool) = false, or |c: &Config| c.snapshots.as_ref()?.disable_periodic.clone(),
 			"--no-periodic-snapshot",
 			"Disable automated snapshots which usually occur once every 10000 blocks.",
 
-		["Whisper options"]
+			ARG arg_snapshot_threads: (Option<usize>) = None, or |c: &Config| c.snapshots.as_ref()?.processing_threads,
+			"--snapshot-threads=[NUM]",
+			"Enables multiple threads for snapshots creation.",
+
+		["Whisper Options"]
 			FLAG flag_whisper: (bool) = false, or |c: &Config| c.whisper.as_ref()?.enabled,
 			"--whisper",
 			"Enable the Whisper network.",
@@ -891,26 +915,43 @@ usage! {
 			"--whisper-pool-size=[MB]",
 			"Target size of the whisper message pool in megabytes.",
 
-		["Legacy options"]
-			FLAG flag_warp: (bool) = false, or |_| None,
-			"--warp",
-			"Does nothing; warp sync is enabled by default. Use --no-warp to disable.",
-
-			FLAG flag_dapps_apis_all: (bool) = false, or |_| None,
-			"--dapps-apis-all",
-			"Dapps server is merged with RPC server. Use --jsonrpc-apis.",
+		["Legacy Options"]
+			// Options that are hidden from config, but are still unique for its functionality.
 
 			FLAG flag_geth: (bool) = false, or |_| None,
 			"--geth",
 			"Run in Geth-compatibility mode. Sets the IPC path to be the same as Geth's. Overrides the --ipc-path and --ipcpath options. Alters RPCs to reflect Geth bugs. Includes the personal_ RPC by default.",
 
-			FLAG flag_testnet: (bool) = false, or |_| None,
-			"--testnet",
-			"Testnet mode. Equivalent to --chain testnet. Overrides the --keys-path option.",
-
 			FLAG flag_import_geth_keys: (bool) = false, or |_| None,
 			"--import-geth-keys",
 			"Attempt to import keys from Geth client.",
+
+			// Options that either do nothing, or are replaced by other options.
+			// FLAG Removed in 1.6 or before.
+
+			FLAG flag_warp: (bool) = false, or |_| None,
+			"--warp",
+			"Does nothing; warp sync is enabled by default. Use --no-warp to disable.",
+
+			FLAG flag_jsonrpc: (bool) = false, or |_| None,
+			"-j, --jsonrpc",
+			"Does nothing; HTTP JSON-RPC is on by default now.",
+
+			FLAG flag_rpc: (bool) = false, or |_| None,
+			"--rpc",
+			"Does nothing; HTTP JSON-RPC is on by default now.",
+
+			FLAG flag_jsonrpc_off: (bool) = false, or |_| None,
+			"--jsonrpc-off",
+			"Equivalent to --no-jsonrpc.",
+
+			FLAG flag_webapp: (bool) = false, or |_| None,
+			"-w, --webapp",
+			"Does nothing; dapps server has been removed.",
+
+			FLAG flag_dapps_off: (bool) = false, or |_| None,
+			"--dapps-off",
+			"Equivalent to --no-dapps.",
 
 			FLAG flag_ipcdisable: (bool) = false, or |_| None,
 			"--ipcdisable",
@@ -920,53 +961,57 @@ usage! {
 			"--ipc-off",
 			"Equivalent to --no-ipc.",
 
+			FLAG flag_testnet: (bool) = false, or |_| None,
+			"--testnet",
+			"Testnet mode. Equivalent to --chain testnet. Overrides the --keys-path option.",
+
 			FLAG flag_nodiscover: (bool) = false, or |_| None,
 			"--nodiscover",
 			"Equivalent to --no-discovery.",
 
-			FLAG flag_jsonrpc: (bool) = false, or |_| None,
-			"-j, --jsonrpc",
-			"Does nothing; JSON-RPC is on by default now.",
+			// FLAG Removed in 1.7.
 
-			FLAG flag_jsonrpc_off: (bool) = false, or |_| None,
-			"--jsonrpc-off",
-			"Equivalent to --no-jsonrpc.",
+			FLAG flag_dapps_apis_all: (bool) = false, or |_| None,
+			"--dapps-apis-all",
+			"Dapps server is merged with HTTP JSON-RPC server. Use --jsonrpc-apis.",
 
-			FLAG flag_webapp: (bool) = false, or |_| None,
-			"-w, --webapp",
-			"Does nothing; dapps server is on by default now.",
+			// FLAG Removed in 1.11.
 
-			FLAG flag_dapps_off: (bool) = false, or |_| None,
-			"--dapps-off",
-			"Equivalent to --no-dapps.",
+			FLAG flag_public_node: (bool) = false, or |_| None,
+			"--public-node",
+			"Does nothing; Public node is removed from Parity.",
 
-			FLAG flag_rpc: (bool) = false, or |_| None,
-			"--rpc",
-			"Does nothing; JSON-RPC is on by default now.",
+			FLAG flag_force_ui: (bool) = false, or |_| None,
+			"--force-ui",
+			"Does nothing; UI is now a separate project.",
 
-			ARG arg_dapps_port: (Option<u16>) = None, or |c: &Config| c.dapps.as_ref()?.port.clone(),
-			"--dapps-port=[PORT]",
-			"Dapps server is merged with RPC server. Use --jsonrpc-port.",
+			FLAG flag_no_ui: (bool) = false, or |_| None,
+			"--no-ui",
+			"Does nothing; UI is now a separate project.",
 
-			ARG arg_dapps_interface: (Option<String>) = None, or |c: &Config| c.dapps.as_ref()?.interface.clone(),
-			"--dapps-interface=[IP]",
-			"Dapps server is merged with RPC server. Use --jsonrpc-interface.",
+			FLAG flag_ui_no_validation: (bool) = false, or |_| None,
+			"--ui-no-validation",
+			"Does nothing; UI is now a separate project.",
 
-			ARG arg_dapps_hosts: (Option<String>) = None, or |c: &Config| c.dapps.as_ref()?.hosts.as_ref().map(|vec| vec.join(",")),
-			"--dapps-hosts=[HOSTS]",
-			"Dapps server is merged with RPC server. Use --jsonrpc-hosts.",
+			// FLAG Removed in 2.0.
 
-			ARG arg_dapps_cors: (Option<String>) = None, or |c: &Config| c.dapps.as_ref()?.cors.clone(),
-			"--dapps-cors=[URL]",
-			"Dapps server is merged with RPC server. Use --jsonrpc-cors.",
+			FLAG flag_fast_and_loose: (bool) = false, or |_| None,
+			"--fast-and-loose",
+			"Does nothing; DB WAL is always activated.",
 
-			ARG arg_dapps_user: (Option<String>) = None, or |c: &Config| c.dapps.as_ref()?.user.clone(),
-			"--dapps-user=[USERNAME]",
-			"Dapps server authentication has been removed.",
+			FLAG flag_no_dapps: (bool) = false, or |c: &Config| c.dapps.as_ref()?._legacy_disable.clone(),
+			"--no-dapps",
+			"Disable the Dapps server (e.g. status page).",
 
-			ARG arg_dapps_pass: (Option<String>) = None, or |c: &Config| c.dapps.as_ref()?.pass.clone(),
-			"--dapps-pass=[PASSWORD]",
-			"Dapps server authentication has been removed.",
+			// ARG Removed in 1.6 or before.
+
+			ARG arg_etherbase: (Option<String>) = None, or |_| None,
+			"--etherbase=[ADDRESS]",
+			"Equivalent to --author ADDRESS.",
+
+			ARG arg_extradata: (Option<String>) = None, or |_| None,
+			"--extradata=[STRING]",
+			"Equivalent to --extra-data STRING.",
 
 			ARG arg_datadir: (Option<String>) = None, or |_| None,
 			"--datadir=[PATH]",
@@ -1012,25 +1057,67 @@ usage! {
 			"--gasprice=[WEI]",
 			"Equivalent to --min-gas-price WEI.",
 
-			ARG arg_etherbase: (Option<String>) = None, or |_| None,
-			"--etherbase=[ADDRESS]",
-			"Equivalent to --author ADDRESS.",
-
-			ARG arg_extradata: (Option<String>) = None, or |_| None,
-			"--extradata=[STRING]",
-			"Equivalent to --extra-data STRING.",
-
 			ARG arg_cache: (Option<u32>) = None, or |_| None,
 			"--cache=[MB]",
 			"Equivalent to --cache-size MB.",
 
-			ARG arg_tx_queue_ban_count: (u16) = 1u16, or |c: &Config| c.mining.as_ref()?.tx_queue_ban_count.clone(),
+			// ARG Removed in 1.7.
+
+			ARG arg_dapps_port: (Option<u16>) = None, or |c: &Config| c.dapps.as_ref()?._legacy_port.clone(),
+			"--dapps-port=[PORT]",
+			"Does nothing; dapps server has been removed.",
+
+			ARG arg_dapps_interface: (Option<String>) = None, or |c: &Config| c.dapps.as_ref()?._legacy_interface.clone(),
+			"--dapps-interface=[IP]",
+			"Does nothing; dapps server has been removed.",
+
+			ARG arg_dapps_hosts: (Option<String>) = None, or |c: &Config| c.dapps.as_ref()?._legacy_hosts.as_ref().map(|vec| vec.join(",")),
+			"--dapps-hosts=[HOSTS]",
+			"Does nothing; dapps server has been removed.",
+
+			ARG arg_dapps_cors: (Option<String>) = None, or |c: &Config| c.dapps.as_ref()?._legacy_cors.clone(),
+			"--dapps-cors=[URL]",
+			"Does nothing; dapps server has been removed.",
+
+			ARG arg_dapps_user: (Option<String>) = None, or |c: &Config| c.dapps.as_ref()?._legacy_user.clone(),
+			"--dapps-user=[USERNAME]",
+			"Dapps server authentication has been removed.",
+
+			ARG arg_dapps_pass: (Option<String>) = None, or |c: &Config| c.dapps.as_ref()?._legacy_pass.clone(),
+			"--dapps-pass=[PASSWORD]",
+			"Dapps server authentication has been removed.",
+
+			// ARG removed in 1.11.
+
+			ARG arg_ui_interface: (Option<String>) = None, or |_| None,
+			"--ui-interface=[IP]",
+			"Does nothing; UI is now a separate project.",
+
+			ARG arg_ui_hosts: (Option<String>) = None, or |_| None,
+			"--ui-hosts=[HOSTS]",
+			"Does nothing; UI is now a separate project.",
+
+			ARG arg_ui_port: (Option<u16>) = None, or |_| None,
+			"--ui-port=[PORT]",
+			"Does nothing; UI is now a separate project.",
+
+			ARG arg_tx_queue_ban_count: (Option<u16>) = None, or |c: &Config| c.mining.as_ref()?.tx_queue_ban_count.clone(),
 			"--tx-queue-ban-count=[C]",
 			"Not supported.",
 
-			ARG arg_tx_queue_ban_time: (u16) = 180u16, or |c: &Config| c.mining.as_ref()?.tx_queue_ban_time.clone(),
+			ARG arg_tx_queue_ban_time: (Option<u16>) = None, or |c: &Config| c.mining.as_ref()?.tx_queue_ban_time.clone(),
 			"--tx-queue-ban-time=[SEC]",
 			"Not supported.",
+
+			// ARG removed in 2.0.
+
+			ARG arg_dapps_path: (Option<String>) = None, or |c: &Config| c.dapps.as_ref()?._legacy_path.clone(),
+			"--dapps-path=[PATH]",
+			"Specify directory where dapps should be installed.",
+
+			ARG arg_ntp_servers: (Option<String>) = None, or |_| None,
+			"--ntp-servers=[HOSTS]",
+			"Does nothing; checking if clock is sync with NTP servers is now done on the UI.",
 	}
 }
 
@@ -1054,6 +1141,7 @@ struct Config {
 	misc: Option<Misc>,
 	stratum: Option<Stratum>,
 	whisper: Option<Whisper>,
+	light: Option<Light>,
 }
 
 #[derive(Default, Debug, PartialEq, Deserialize)]
@@ -1066,7 +1154,6 @@ struct Operating {
 	auto_update_delay: Option<u16>,
 	auto_update_check_frequency: Option<u16>,
 	release_track: Option<String>,
-	public_node: Option<bool>,
 	no_download: Option<bool>,
 	no_consensus: Option<bool>,
 	chain: Option<String>,
@@ -1077,6 +1164,9 @@ struct Operating {
 	light: Option<bool>,
 	no_persistent_txqueue: Option<bool>,
 	no_hardcoded_sync: Option<bool>,
+
+	#[serde(rename = "public_node")]
+	_legacy_public_node: Option<bool>,
 }
 
 #[derive(Default, Debug, PartialEq, Deserialize)]
@@ -1105,12 +1195,18 @@ struct PrivateTransactions {
 #[derive(Default, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Ui {
-	force: Option<bool>,
-	disable: Option<bool>,
-	port: Option<u16>,
-	interface: Option<String>,
-	hosts: Option<Vec<String>>,
 	path: Option<String>,
+
+	#[serde(rename = "force")]
+	_legacy_force: Option<bool>,
+	#[serde(rename = "disable")]
+	_legacy_disable: Option<bool>,
+	#[serde(rename = "port")]
+	_legacy_port: Option<u16>,
+	#[serde(rename = "interface")]
+	_legacy_interface: Option<String>,
+	#[serde(rename = "hosts")]
+	_legacy_hosts: Option<Vec<String>>,
 }
 
 #[derive(Default, Debug, PartialEq, Deserialize)]
@@ -1119,6 +1215,7 @@ struct Network {
 	warp: Option<bool>,
 	warp_barrier: Option<u64>,
 	port: Option<u16>,
+	interface: Option<String>,
 	min_peers: Option<u16>,
 	max_peers: Option<u16>,
 	snapshot_peers: Option<u16>,
@@ -1145,6 +1242,11 @@ struct Rpc {
 	hosts: Option<Vec<String>>,
 	server_threads: Option<usize>,
 	processing_threads: Option<usize>,
+	max_payload: Option<usize>,
+	keep_alive: Option<bool>,
+	experimental_rpcs: Option<bool>,
+	poll_lifetime: Option<u32>,
+	allow_missing_blocks: Option<bool>,
 }
 
 #[derive(Default, Debug, PartialEq, Deserialize)]
@@ -1170,14 +1272,22 @@ struct Ipc {
 #[derive(Default, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Dapps {
-	disable: Option<bool>,
-	port: Option<u16>,
-	interface: Option<String>,
-	hosts: Option<Vec<String>>,
-	cors: Option<String>,
-	path: Option<String>,
-	user: Option<String>,
-	pass: Option<String>,
+	#[serde(rename = "disable")]
+	_legacy_disable: Option<bool>,
+	#[serde(rename = "port")]
+	_legacy_port: Option<u16>,
+	#[serde(rename = "interface")]
+	_legacy_interface: Option<String>,
+	#[serde(rename = "hosts")]
+	_legacy_hosts: Option<Vec<String>>,
+	#[serde(rename = "cors")]
+	_legacy_cors: Option<String>,
+	#[serde(rename = "path")]
+	_legacy_path: Option<String>,
+	#[serde(rename = "user")]
+	_legacy_user: Option<String>,
+	#[serde(rename = "pass")]
+	_legacy_pass: Option<String>,
 }
 
 #[derive(Default, Debug, PartialEq, Deserialize)]
@@ -1185,8 +1295,8 @@ struct Dapps {
 struct SecretStore {
 	disable: Option<bool>,
 	disable_http: Option<bool>,
-	disable_acl_check: Option<bool>,
 	disable_auto_migrate: Option<bool>,
+	acl_contract: Option<String>,
 	service_contract: Option<String>,
 	service_contract_srv_gen: Option<String>,
 	service_contract_srv_retr: Option<String>,
@@ -1195,6 +1305,7 @@ struct SecretStore {
 	self_secret: Option<String>,
 	admin_public: Option<String>,
 	nodes: Option<Vec<String>>,
+	server_set_contract: Option<String>,
 	interface: Option<String>,
 	port: Option<u16>,
 	http_interface: Option<String>,
@@ -1237,14 +1348,16 @@ struct Mining {
 	tx_queue_size: Option<usize>,
 	tx_queue_per_sender: Option<usize>,
 	tx_queue_mem_limit: Option<u32>,
-	tx_queue_gas: Option<String>,
 	tx_queue_strategy: Option<String>,
 	tx_queue_ban_count: Option<u16>,
 	tx_queue_ban_time: Option<u16>,
+	tx_queue_no_unfamiliar_locals: Option<bool>,
+	tx_queue_no_early_reject: Option<bool>,
 	remove_solved: Option<bool>,
 	notify_work: Option<Vec<String>>,
 	refuse_service_transactions: Option<bool>,
 	infinite_pending_block: Option<bool>,
+	max_round_blocks_to_import: Option<usize>,
 }
 
 #[derive(Default, Debug, PartialEq, Deserialize)]
@@ -1278,12 +1391,12 @@ struct Footprint {
 #[serde(deny_unknown_fields)]
 struct Snapshots {
 	disable_periodic: Option<bool>,
+	processing_threads: Option<usize>,
 }
 
 #[derive(Default, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Misc {
-	ntp_servers: Option<Vec<String>>,
 	logging: Option<String>,
 	log_file: Option<String>,
 	color: Option<bool>,
@@ -1298,12 +1411,22 @@ struct Whisper {
 	pool_size: Option<usize>,
 }
 
+#[derive(Default, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Light {
+	on_demand_response_time_window: Option<u64>,
+	on_demand_request_backoff_start: Option<u64>,
+	on_demand_request_backoff_max: Option<u64>,
+	on_demand_request_backoff_rounds_max: Option<usize>,
+	on_demand_request_consecutive_failures: Option<usize>,
+}
+
 #[cfg(test)]
 mod tests {
 	use super::{
 		Args, ArgsError,
 		Config, Operating, Account, Ui, Network, Ws, Rpc, Ipc, Dapps, Ipfs, Mining, Footprint,
-		Snapshots, Misc, Whisper, SecretStore,
+		Snapshots, Misc, Whisper, SecretStore, Light,
 	};
 	use toml;
 	use clap::{ErrorKind as ClapErrorKind};
@@ -1397,15 +1520,13 @@ mod tests {
 		let args = Args::parse(&["parity", "--secretstore-nodes", "abc@127.0.0.1:3333,cde@10.10.10.10:4444"]).unwrap();
 		assert_eq!(args.arg_secretstore_nodes, "abc@127.0.0.1:3333,cde@10.10.10.10:4444");
 
-		let args = Args::parse(&["parity", "--password", "~/.safe/1", "--password", "~/.safe/2", "--ui-port", "8123", "ui"]).unwrap();
+		let args = Args::parse(&["parity", "--password", "~/.safe/1", "--password", "~/.safe/2", "--ui-port", "8123"]).unwrap();
 		assert_eq!(args.arg_password, vec!["~/.safe/1".to_owned(), "~/.safe/2".to_owned()]);
-		assert_eq!(args.arg_ui_port, 8123);
-		assert_eq!(args.cmd_ui, true);
+		assert_eq!(args.arg_ui_port, Some(8123));
 
-		let args = Args::parse(&["parity", "--password", "~/.safe/1,~/.safe/2", "--ui-port", "8123", "ui"]).unwrap();
+		let args = Args::parse(&["parity", "--password", "~/.safe/1,~/.safe/2", "--ui-port", "8123"]).unwrap();
 		assert_eq!(args.arg_password, vec!["~/.safe/1".to_owned(), "~/.safe/2".to_owned()]);
-		assert_eq!(args.arg_ui_port, 8123);
-		assert_eq!(args.cmd_ui, true);
+		assert_eq!(args.arg_ui_port, Some(8123));
 	}
 
 	#[test]
@@ -1469,7 +1590,6 @@ mod tests {
 		// then
 		assert_eq!(args, Args {
 			// Commands
-			cmd_ui: false,
 			cmd_dapp: false,
 			cmd_daemon: false,
 			cmd_account: false,
@@ -1558,15 +1678,16 @@ mod tests {
 
 			flag_force_ui: false,
 			flag_no_ui: false,
-			arg_ui_port: 8180u16,
-			arg_ui_interface: "127.0.0.1".into(),
-			arg_ui_hosts: "none".into(),
+			arg_ui_port: None,
+			arg_ui_interface: None,
+			arg_ui_hosts: None,
 			arg_ui_path: "$HOME/.parity/signer".into(),
 			flag_ui_no_validation: false,
 
 			// -- Networking Options
 			flag_no_warp: false,
 			arg_port: 30303u16,
+			arg_interface: "all".into(),
 			arg_min_peers: Some(25u16),
 			arg_max_peers: Some(50u16),
 			arg_max_pending_peers: 64u16,
@@ -1585,6 +1706,8 @@ mod tests {
 			// -- API and Console Options
 			// RPC
 			flag_no_jsonrpc: false,
+			flag_jsonrpc_no_keep_alive: false,
+			flag_jsonrpc_experimental: false,
 			arg_jsonrpc_port: 8545u16,
 			arg_jsonrpc_interface: "local".into(),
 			arg_jsonrpc_cors: "null".into(),
@@ -1592,6 +1715,9 @@ mod tests {
 			arg_jsonrpc_hosts: "none".into(),
 			arg_jsonrpc_server_threads: None,
 			arg_jsonrpc_threads: 4,
+			arg_jsonrpc_max_payload: None,
+			arg_poll_lifetime: 60u32,
+			flag_jsonrpc_allow_missing_blocks: false,
 
 			// WS
 			flag_no_ws: false,
@@ -1608,22 +1734,23 @@ mod tests {
 			arg_ipc_apis: "web3,eth,net,parity,parity_accounts,personal,traces,rpc,secretstore".into(),
 
 			// DAPPS
-			arg_dapps_path: "$HOME/.parity/dapps".into(),
+			arg_dapps_path: Some("$HOME/.parity/dapps".into()),
 			flag_no_dapps: false,
 
 			// SECRETSTORE
 			flag_no_secretstore: false,
 			flag_no_secretstore_http: false,
-			flag_no_secretstore_acl_check: false,
 			flag_no_secretstore_auto_migrate: false,
-			arg_secretstore_contract: "none".into(),
-			arg_secretstore_srv_gen_contract: "none".into(),
-			arg_secretstore_srv_retr_contract: "none".into(),
-			arg_secretstore_doc_store_contract: "none".into(),
-			arg_secretstore_doc_sretr_contract: "none".into(),
+			arg_secretstore_acl_contract: Some("registry".into()),
+			arg_secretstore_contract: Some("none".into()),
+			arg_secretstore_srv_gen_contract: Some("none".into()),
+			arg_secretstore_srv_retr_contract: Some("none".into()),
+			arg_secretstore_doc_store_contract: Some("none".into()),
+			arg_secretstore_doc_sretr_contract: Some("none".into()),
 			arg_secretstore_secret: None,
 			arg_secretstore_admin_public: None,
 			arg_secretstore_nodes: "".into(),
+			arg_secretstore_server_set_contract: Some("registry".into()),
 			arg_secretstore_interface: "local".into(),
 			arg_secretstore_port: 8083u16,
 			arg_secretstore_http_interface: "local".into(),
@@ -1646,7 +1773,7 @@ mod tests {
 			arg_reseal_max_period: 60000u64,
 			flag_reseal_on_uncle: false,
 			arg_work_queue_size: 20usize,
-			arg_tx_gas_limit: Some("6283184".into()),
+			arg_tx_gas_limit: Some("10000000".into()),
 			arg_tx_time_limit: Some(100u64),
 			arg_relay_set: "cheap".into(),
 			arg_min_gas_price: Some(0u64),
@@ -1654,20 +1781,22 @@ mod tests {
 			arg_gas_price_percentile: 50usize,
 			arg_usd_per_eth: "auto".into(),
 			arg_price_update_period: "hourly".into(),
-			arg_gas_floor_target: "4700000".into(),
-			arg_gas_cap: "6283184".into(),
+			arg_gas_floor_target: "8000000".into(),
+			arg_gas_cap: "10000000".into(),
 			arg_extra_data: Some("Parity".into()),
+			flag_tx_queue_no_unfamiliar_locals: false,
+			flag_tx_queue_no_early_reject: false,
 			arg_tx_queue_size: 8192usize,
 			arg_tx_queue_per_sender: None,
 			arg_tx_queue_mem_limit: 4u32,
-			arg_tx_queue_gas: "off".into(),
 			arg_tx_queue_strategy: "gas_factor".into(),
-			arg_tx_queue_ban_count: 1u16,
-			arg_tx_queue_ban_time: 180u16,
+			arg_tx_queue_ban_count: Some(1u16),
+			arg_tx_queue_ban_time: Some(180u16),
 			flag_remove_solved: false,
 			arg_notify_work: Some("http://localhost:3001".into()),
 			flag_refuse_service_transactions: false,
 			flag_infinite_pending_block: false,
+			arg_max_round_blocks_to_import: 12usize,
 
 			flag_stratum: false,
 			arg_stratum_interface: "local".to_owned(),
@@ -1703,6 +1832,14 @@ mod tests {
 			arg_export_state_at: "latest".into(),
 			arg_snapshot_at: "latest".into(),
 			flag_no_periodic_snapshot: false,
+			arg_snapshot_threads: None,
+
+			// -- Light options.
+			arg_on_demand_response_time_window: Some(2),
+			arg_on_demand_request_backoff_start: Some(9),
+			arg_on_demand_request_backoff_max: Some(15),
+			arg_on_demand_request_backoff_rounds_max: Some(100),
+			arg_on_demand_request_consecutive_failures: Some(1),
 
 			// -- Whisper options.
 			flag_whisper: false,
@@ -1749,7 +1886,7 @@ mod tests {
 			flag_can_restart: false,
 
 			// -- Miscellaneous Options
-			arg_ntp_servers: "0.parity.pool.ntp.org:123,1.parity.pool.ntp.org:123,2.parity.pool.ntp.org:123,3.parity.pool.ntp.org:123".into(),
+			arg_ntp_servers: None,
 			flag_version: false,
 			arg_logging: Some("own_tx=trace".into()),
 			arg_log_file: Some("/var/log/parity.log".into()),
@@ -1791,7 +1928,6 @@ mod tests {
 				auto_update_delay: None,
 				auto_update_check_frequency: None,
 				release_track: None,
-				public_node: None,
 				no_download: None,
 				no_consensus: None,
 				chain: Some("./chain.json".into()),
@@ -1802,6 +1938,7 @@ mod tests {
 				light: None,
 				no_hardcoded_sync: None,
 				no_persistent_txqueue: None,
+				_legacy_public_node: None,
 			}),
 			account: Some(Account {
 				unlock: Some(vec!["0x1".into(), "0x2".into(), "0x3".into()]),
@@ -1812,17 +1949,18 @@ mod tests {
 				fast_unlock: None,
 			}),
 			ui: Some(Ui {
-				force: None,
-				disable: Some(true),
-				port: None,
-				interface: None,
-				hosts: None,
 				path: None,
+				_legacy_force: None,
+				_legacy_disable: Some(true),
+				_legacy_port: None,
+				_legacy_interface: None,
+				_legacy_hosts: None,
 			}),
 			network: Some(Network {
 				warp: Some(false),
 				warp_barrier: None,
 				port: None,
+				interface: None,
 				min_peers: Some(10),
 				max_peers: Some(20),
 				max_pending_peers: Some(30),
@@ -1855,6 +1993,11 @@ mod tests {
 				hosts: None,
 				server_threads: None,
 				processing_threads: None,
+				max_payload: None,
+				keep_alive: None,
+				experimental_rpcs: None,
+				poll_lifetime: None,
+				allow_missing_blocks: None
 			}),
 			ipc: Some(Ipc {
 				disable: None,
@@ -1862,20 +2005,20 @@ mod tests {
 				apis: Some(vec!["rpc".into(), "eth".into()]),
 			}),
 			dapps: Some(Dapps {
-				disable: None,
-				port: Some(8080),
-				path: None,
-				interface: None,
-				hosts: None,
-				cors: None,
-				user: Some("username".into()),
-				pass: Some("password".into())
+				_legacy_disable: None,
+				_legacy_port: Some(8080),
+				_legacy_path: None,
+				_legacy_interface: None,
+				_legacy_hosts: None,
+				_legacy_cors: None,
+				_legacy_user: Some("username".into()),
+				_legacy_pass: Some("password".into())
 			}),
 			secretstore: Some(SecretStore {
 				disable: None,
 				disable_http: None,
-				disable_acl_check: None,
 				disable_auto_migrate: None,
+				acl_contract: None,
 				service_contract: None,
 				service_contract_srv_gen: None,
 				service_contract_srv_retr: None,
@@ -1884,6 +2027,7 @@ mod tests {
 				self_secret: None,
 				admin_public: None,
 				nodes: None,
+				server_set_contract: None,
 				interface: None,
 				port: Some(8083),
 				http_interface: None,
@@ -1918,10 +2062,11 @@ mod tests {
 				tx_queue_size: Some(8192),
 				tx_queue_per_sender: None,
 				tx_queue_mem_limit: None,
-				tx_queue_gas: Some("off".into()),
 				tx_queue_strategy: None,
 				tx_queue_ban_count: None,
 				tx_queue_ban_time: None,
+				tx_queue_no_unfamiliar_locals: None,
+				tx_queue_no_early_reject: None,
 				tx_gas_limit: None,
 				tx_time_limit: None,
 				extra_data: None,
@@ -1929,6 +2074,7 @@ mod tests {
 				notify_work: None,
 				refuse_service_transactions: None,
 				infinite_pending_block: None,
+				max_round_blocks_to_import: None,
 			}),
 			footprint: Some(Footprint {
 				tracing: Some("on".into()),
@@ -1946,11 +2092,18 @@ mod tests {
 				scale_verifiers: Some(false),
 				num_verifiers: None,
 			}),
+			light: Some(Light {
+				on_demand_response_time_window: Some(2),
+				on_demand_request_backoff_start: Some(9),
+				on_demand_request_backoff_max: Some(15),
+				on_demand_request_backoff_rounds_max: Some(10),
+				on_demand_request_consecutive_failures: Some(1),
+			}),
 			snapshots: Some(Snapshots {
 				disable_periodic: Some(true),
+				processing_threads: None,
 			}),
 			misc: Some(Misc {
-				ntp_servers: Some(vec!["0.parity.pool.ntp.org:123".into()]),
 				logging: Some("own_tx=trace".into()),
 				log_file: Some("/var/log/parity.log".into()),
 				color: Some(true),

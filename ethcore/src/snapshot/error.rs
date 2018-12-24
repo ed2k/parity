@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -21,7 +21,7 @@ use std::fmt;
 use ids::BlockId;
 
 use ethereum_types::H256;
-use trie::TrieError;
+use ethtrie::TrieError;
 use rlp::DecoderError;
 
 /// Snapshot-related errors.
@@ -65,6 +65,8 @@ pub enum Error {
 	BadEpochProof(u64),
 	/// Wrong chunk format.
 	WrongChunkFormat(String),
+	/// Unlinked ancient block chain
+	UnlinkedAncientBlockChain,
 }
 
 impl fmt::Display for Error {
@@ -91,6 +93,7 @@ impl fmt::Display for Error {
 			Error::SnapshotsUnsupported => write!(f, "Snapshots unsupported by consensus engine."),
 			Error::BadEpochProof(i) => write!(f, "Bad epoch proof for transition to epoch {}", i),
 			Error::WrongChunkFormat(ref msg) => write!(f, "Wrong chunk format: {}", msg),
+			Error::UnlinkedAncientBlockChain => write!(f, "Unlinked ancient blocks chain"),
 		}
 	}
 }

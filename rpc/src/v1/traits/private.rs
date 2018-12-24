@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -35,8 +35,8 @@ build_rpc_trait! {
 		fn compose_deployment_transaction(&self, BlockNumber, Bytes, Vec<H160>, U256) -> Result<PrivateTransactionReceiptAndTransaction, Error>;
 
 		/// Make a call to the private contract
-		#[rpc(meta, name = "private_call")]
-		fn private_call(&self, Self::Metadata, BlockNumber, CallRequest) -> Result<Bytes, Error>;
+		#[rpc(name = "private_call")]
+		fn private_call(&self, BlockNumber, CallRequest) -> Result<Bytes, Error>;
 
 		/// Retrieve the id of the key associated with the contract
 		#[rpc(name = "private_contractKey")]

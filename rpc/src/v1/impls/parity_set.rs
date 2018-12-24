@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -17,22 +17,20 @@
 /// Parity-specific rpc interface for operations altering the settings.
 use std::io;
 use std::sync::Arc;
+use std::time::Duration;
 
-use ethcore::client::BlockChainClient;
+use ethcore::client::{BlockChainClient, Mode};
 use ethcore::miner::MinerService;
-use ethcore::mode::Mode;
 use sync::ManageNetwork;
 use fetch::{self, Fetch};
-use futures_cpupool::CpuPool;
 use hash::keccak_buffer;
 use updater::{Service as UpdateService};
 
 use jsonrpc_core::{BoxFuture, Result};
 use jsonrpc_core::futures::Future;
-use v1::helpers::dapps::DappsService;
 use v1::helpers::errors;
 use v1::traits::ParitySet;
-use v1::types::{Bytes, H160, H256, U256, ReleaseInfo, Transaction, LocalDapp};
+use v1::types::{Bytes, H160, H256, U256, ReleaseInfo, Transaction};
 
 /// Parity-specific rpc interface for operations altering the settings.
 pub struct ParitySetClient<C, M, U, F = fetch::Client> {
@@ -40,10 +38,7 @@ pub struct ParitySetClient<C, M, U, F = fetch::Client> {
 	miner: Arc<M>,
 	updater: Arc<U>,
 	net: Arc<ManageNetwork>,
-	dapps: Option<Arc<DappsService>>,
 	fetch: F,
-	pool: CpuPool,
-	eip86_transition: u64,
 }
 
 impl<C, M, U, F> ParitySetClient<C, M, U, F>
@@ -55,19 +50,14 @@ impl<C, M, U, F> ParitySetClient<C, M, U, F>
 		miner: &Arc<M>,
 		updater: &Arc<U>,
 		net: &Arc<ManageNetwork>,
-		dapps: Option<Arc<DappsService>>,
 		fetch: F,
-		pool: CpuPool,
 	) -> Self {
 		ParitySetClient {
 			client: client.clone(),
 			miner: miner.clone(),
 			updater: updater.clone(),
 			net: net.clone(),
-			dapps: dapps,
 			fetch: fetch,
-			pool: pool,
-			eip86_transition: client.eip86_transition(),
 		}
 	}
 }
@@ -119,7 +109,7 @@ impl<C, M, U, F> ParitySet for ParitySetClient<C, M, U, F> where
 	}
 
 	fn set_engine_signer(&self, address: H160, password: String) -> Result<bool> {
-		self.miner.set_author(address.into(), Some(password)).map_err(Into::into).map_err(errors::password)?;
+		self.miner.set_author(address.into(), Some(password.into())).map_err(Into::into).map_err(errors::password)?;
 		Ok(true)
 	}
 
@@ -160,8 +150,8 @@ impl<C, M, U, F> ParitySet for ParitySetClient<C, M, U, F> where
 	fn set_mode(&self, mode: String) -> Result<bool> {
 		self.client.set_mode(match mode.as_str() {
 			"offline" => Mode::Off,
-			"dark" => Mode::Dark(300),
-			"passive" => Mode::Passive(300, 3600),
+			"dark" => Mode::Dark(Duration::from_secs(300)),
+			"passive" => Mode::Passive(Duration::from_secs(300), Duration::from_secs(3600)),
 			"active" => Mode::Active,
 			e => { return Err(errors::invalid_params("mode", e.to_owned())); },
 		});
@@ -183,15 +173,7 @@ impl<C, M, U, F> ParitySet for ParitySetClient<C, M, U, F> where
 				})
 				.map(Into::into)
 		});
-		Box::new(self.pool.spawn(future))
-	}
-
-	fn dapps_refresh(&self) -> Result<bool> {
-		self.dapps.as_ref().map(|dapps| dapps.refresh_local_dapps()).ok_or_else(errors::dapps_disabled)
-	}
-
-	fn dapps_list(&self) -> Result<Vec<LocalDapp>> {
-		self.dapps.as_ref().map(|dapps| dapps.list_dapps()).ok_or_else(errors::dapps_disabled)
+		Box::new(future)
 	}
 
 	fn upgrade_ready(&self) -> Result<Option<ReleaseInfo>> {
@@ -203,11 +185,10 @@ impl<C, M, U, F> ParitySet for ParitySetClient<C, M, U, F> where
 	}
 
 	fn remove_transaction(&self, hash: H256) -> Result<Option<Transaction>> {
-		let block_number = self.client.chain_info().best_block_number;
 		let hash = hash.into();
 
 		Ok(self.miner.remove_transaction(&hash)
-		   .map(|t| Transaction::from_pending(t.pending().clone(), block_number + 1, self.eip86_transition))
+		   .map(|t| Transaction::from_pending(t.pending().clone()))
 		)
 	}
 }

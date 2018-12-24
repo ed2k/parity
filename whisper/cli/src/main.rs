@@ -19,6 +19,9 @@
 //! Spawns an Ethereum network instance and attaches the Whisper protocol RPCs to it.
 //!
 
+#![warn(missing_docs)]
+#![cfg_attr(feature = "cargo-clippy", deny(clippy, clippy_pedantic))]
+
 extern crate docopt;
 extern crate ethcore_network_devp2p as devp2p;
 extern crate ethcore_network as net;
@@ -45,8 +48,8 @@ use jsonrpc_http_server::{AccessControlAllowOrigin, DomainsValidation};
 
 const POOL_UNIT: usize = 1024 * 1024;
 const USAGE: &'static str = r#"
-Whisper CLI.
-	Copyright 2018 Parity Technologies (UK) Ltd
+Parity Whisper-v2 CLI.
+	Copyright 2015-2018 Parity Technologies (UK) Ltd.
 
 Usage:
 	whisper [options]
@@ -181,17 +184,18 @@ impl fmt::Display for Error {
 }
 
 fn main() {
-	panic_hook::set();
+	panic_hook::set_abort();
 
 	match execute(env::args()) {
 		Ok(_) => {
 			println!("whisper-cli terminated");
 			process::exit(1);
-		}
+		},
+		Err(Error::Docopt(ref e)) => e.exit(),
 		Err(err) => {
 			println!("{}", err);
 			process::exit(1);
-		},
+		}
 	}
 }
 
@@ -215,7 +219,7 @@ fn execute<S, I>(command: I) -> Result<(), Error> where I: IntoIterator<Item=S>,
 	let network = devp2p::NetworkService::new(net::NetworkConfiguration::new_local(), None)?;
 
 	// Start network service
-	network.start()?;
+	network.start().map_err(|(err, _)| err)?;
 
 	// Attach whisper protocol to the network service
 	network.register_protocol(whisper_network_handler.clone(), whisper::net::PROTOCOL_ID,

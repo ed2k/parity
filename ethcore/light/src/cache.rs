@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -31,7 +31,7 @@ use ethereum_types::{H256, U256};
 use memory_cache::MemoryLruCache;
 
 /// Configuration for how much data to cache.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct CacheSizes {
 	/// Maximum size, in bytes, of cached headers.
 	pub headers: usize,
@@ -83,33 +83,33 @@ impl Cache {
 			receipts: MemoryLruCache::new(sizes.receipts),
 			chain_score: MemoryLruCache::new(sizes.chain_score),
 			corpus: None,
-			corpus_expiration: corpus_expiration,
+			corpus_expiration,
 		}
 	}
 
 	/// Query header by hash.
 	pub fn block_header(&mut self, hash: &H256) -> Option<encoded::Header> {
-		self.headers.get_mut(hash).map(|x| x.clone())
+		self.headers.get_mut(hash).cloned()
 	}
 
 	/// Query hash by number.
-	pub fn block_hash(&mut self, num: &BlockNumber) -> Option<H256> {
-		self.canon_hashes.get_mut(num).map(|x| x.clone())
+	pub fn block_hash(&mut self, num: BlockNumber) -> Option<H256> {
+		self.canon_hashes.get_mut(&num).map(|h| *h)
 	}
 
 	/// Query block body by block hash.
 	pub fn block_body(&mut self, hash: &H256) -> Option<encoded::Body> {
-		self.bodies.get_mut(hash).map(|x| x.clone())
+		self.bodies.get_mut(hash).cloned()
 	}
 
 	/// Query block receipts by block hash.
 	pub fn block_receipts(&mut self, hash: &H256) -> Option<Vec<Receipt>> {
-		self.receipts.get_mut(hash).map(|x| x.clone())
+		self.receipts.get_mut(hash).cloned()
 	}
 
 	/// Query chain score by block hash.
 	pub fn chain_score(&mut self, hash: &H256) -> Option<U256> {
-		self.chain_score.get_mut(hash).map(|x| x.clone())
+		self.chain_score.get_mut(hash).map(|h| *h)
 	}
 
 	/// Cache the given header.
@@ -179,14 +179,15 @@ mod tests {
 
 	#[test]
 	fn corpus_inaccessible() {
-		let mut cache = Cache::new(Default::default(), Duration::from_secs(5 * 3600));
+		let duration = Duration::from_secs(20);
+		let mut cache = Cache::new(Default::default(), duration.clone());
 
 		cache.set_gas_price_corpus(vec![].into());
 		assert_eq!(cache.gas_price_corpus(), Some(vec![].into()));
 
 		{
 			let corpus_time = &mut cache.corpus.as_mut().unwrap().1;
-			*corpus_time = *corpus_time - Duration::from_secs(6 * 3600);
+			*corpus_time = *corpus_time - duration;
 		}
 		assert!(cache.gas_price_corpus().is_none());
 	}

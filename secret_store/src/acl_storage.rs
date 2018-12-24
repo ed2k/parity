@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -16,15 +16,14 @@
 
 use std::sync::Arc;
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
 use parking_lot::{Mutex, RwLock};
-use ethcore::client::{BlockId, ChainNotify, ChainRoute, CallContract, RegistryInfo};
-use ethereum_types::{H256, Address};
-use bytes::Bytes;
+use ethcore::client::{BlockId, ChainNotify, NewBlocks, CallContract};
+use ethereum_types::Address;
+use ethabi::FunctionOutputDecoder;
 use trusted_client::TrustedClient;
-use types::{Error, ServerKeyId};
+use types::{Error, ServerKeyId, ContractAddress};
 
-use_contract!(acl_storage, "AclStorage", "res/acl_storage.json");
+use_contract!(acl_storage, "res/acl_storage.json");
 
 const ACL_CHECKER_CONTRACT_REGISTRY_NAME: &'static str = "secretstore_acl_checker";
 
@@ -44,10 +43,10 @@ pub struct OnChainAclStorage {
 struct CachedContract {
 	/// Blockchain client.
 	client: TrustedClient,
-	/// Contract address.
-	contract_addr: Option<Address>,
-	/// Contract at given address.
-	contract: acl_storage::AclStorage,
+	/// Contract address source.
+	address_source: ContractAddress,
+	/// Current contract address.
+	contract_address: Option<Address>,
 }
 
 /// Dummy ACL storage implementation (check always passed).
@@ -57,10 +56,10 @@ pub struct DummyAclStorage {
 }
 
 impl OnChainAclStorage {
-	pub fn new(trusted_client: TrustedClient) -> Result<Arc<Self>, Error> {
+	pub fn new(trusted_client: TrustedClient, address_source: ContractAddress) -> Result<Arc<Self>, Error> {
 		let client = trusted_client.get_untrusted();
 		let acl_storage = Arc::new(OnChainAclStorage {
-			contract: Mutex::new(CachedContract::new(trusted_client)),
+			contract: Mutex::new(CachedContract::new(trusted_client, address_source)),
 		});
 		client
 			.ok_or_else(|| Error::Internal("Constructing OnChainAclStorage without active Client".into()))?
@@ -76,43 +75,44 @@ impl AclStorage for OnChainAclStorage {
 }
 
 impl ChainNotify for OnChainAclStorage {
-	fn new_blocks(&self, _imported: Vec<H256>, _invalid: Vec<H256>, route: ChainRoute, _sealed: Vec<H256>, _proposed: Vec<Bytes>, _duration: Duration) {
-		if !route.enacted().is_empty() || !route.retracted().is_empty() {
-			self.contract.lock().update()
+	fn new_blocks(&self, new_blocks: NewBlocks) {
+		if new_blocks.has_more_blocks_to_import { return }
+		if !new_blocks.route.enacted().is_empty() || !new_blocks.route.retracted().is_empty() {
+			self.contract.lock().update_contract_address()
 		}
 	}
 }
 
 impl CachedContract {
-	pub fn new(client: TrustedClient) -> Self {
-		CachedContract {
+	pub fn new(client: TrustedClient, address_source: ContractAddress) -> Self {
+		let mut contract = CachedContract {
 			client,
-			contract_addr: None,
-			contract: acl_storage::AclStorage::default(),
-		}
+			address_source,
+			contract_address: None,
+		};
+		contract.update_contract_address();
+		contract
 	}
 
-	pub fn update(&mut self) {
-		if let Some(client) = self.client.get() {
-			match client.registry_address(ACL_CHECKER_CONTRACT_REGISTRY_NAME.to_owned(), BlockId::Latest) {
-				Some(new_contract_addr) if Some(new_contract_addr).as_ref() != self.contract_addr.as_ref() => {
-					trace!(target: "secretstore", "Configuring for ACL checker contract from {}", new_contract_addr);
-					self.contract_addr = Some(new_contract_addr);
-				},
-				Some(_) | None => ()
-			}
+	pub fn update_contract_address(&mut self) {
+		let contract_address = self.client.read_contract_address(ACL_CHECKER_CONTRACT_REGISTRY_NAME.into(), &self.address_source);
+		if contract_address != self.contract_address {
+			trace!(target: "secretstore", "Configuring for ACL checker contract from address {:?}",
+				contract_address);
+
+			self.contract_address = contract_address;
 		}
 	}
 
 	pub fn check(&mut self, requester: Address, document: &ServerKeyId) -> Result<bool, Error> {
 		if let Some(client) = self.client.get() {
-			// call contract to check access
-			match self.contract_addr {
+			// call contract to check accesss
+			match self.contract_address {
 				Some(contract_address) => {
-					let do_call = |data| client.call_contract(BlockId::Latest, contract_address, data);
-					self.contract.functions()
-						.check_permissions()
-						.call(requester, document.clone(), &do_call)
+					let (encoded, decoder) = acl_storage::functions::check_permissions::call(requester, document.clone());
+					let d = client.call_contract(BlockId::Latest, contract_address, encoded)
+						.map_err(|e| Error::Internal(format!("ACL checker call error: {}", e.to_string())))?;
+					decoder.decode(&d)
 						.map_err(|e| Error::Internal(format!("ACL checker call error: {}", e.to_string())))
 				},
 				None => Err(Error::Internal("ACL checker contract is not configured".to_owned())),

@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -26,27 +26,27 @@ use std::hash::{Hash, Hasher};
 use std::net::{SocketAddr, ToSocketAddrs, SocketAddrV4, SocketAddrV6, Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::{fs, mem, slice};
+use std::{fs, slice};
 use std::time::{self, Duration, SystemTime};
 use rand::{self, Rng};
 
 /// Node public key
 pub type NodeId = H512;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 /// Node address info
 pub struct NodeEndpoint {
 	/// IP(V4 or V6) address
 	pub address: SocketAddr,
-	/// Conneciton port.
+	/// Connection port.
 	pub udp_port: u16
 }
 
 impl NodeEndpoint {
 	pub fn udp_address(&self) -> SocketAddr {
 		match self.address {
-			SocketAddr::V4(a) => SocketAddr::V4(SocketAddrV4::new(a.ip().clone(), self.udp_port)),
-			SocketAddr::V6(a) => SocketAddr::V6(SocketAddrV6::new(a.ip().clone(), self.udp_port, a.flowinfo(), a.scope_id())),
+			SocketAddr::V4(a) => SocketAddr::V4(SocketAddrV4::new(*a.ip(), self.udp_port)),
+			SocketAddr::V6(a) => SocketAddr::V6(SocketAddrV6::new(*a.ip(), self.udp_port, a.flowinfo(), a.scope_id())),
 		}
 	}
 
@@ -61,10 +61,10 @@ impl NodeEndpoint {
 
 	pub fn is_allowed_by_predefined(&self, filter: &AllowIP) -> bool {
 		match filter {
-			&AllowIP::All => true,
-			&AllowIP::Private => self.address.ip().is_usable_private(),
-			&AllowIP::Public => self.address.ip().is_usable_public(),
-			&AllowIP::None => false,
+			AllowIP::All => true,
+			AllowIP::Private => self.address.ip().is_usable_private(),
+			AllowIP::Public => self.address.ip().is_usable_public(),
+			AllowIP::None => false,
 		}
 	}
 
@@ -75,13 +75,13 @@ impl NodeEndpoint {
 		let address = match addr_bytes.len() {
 			4 => Ok(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(addr_bytes[0], addr_bytes[1], addr_bytes[2], addr_bytes[3]), tcp_port))),
 			16 => unsafe {
-				let o: *const u16 = mem::transmute(addr_bytes.as_ptr());
+				let o: *const u16 = addr_bytes.as_ptr() as *const u16;
 				let o = slice::from_raw_parts(o, 8);
 				Ok(SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::new(o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7]), tcp_port, 0, 0)))
 			},
 			_ => Err(DecoderError::RlpInconsistentLengthAndData)
 		}?;
-		Ok(NodeEndpoint { address: address, udp_port: udp_port })
+		Ok(NodeEndpoint { address, udp_port })
 	}
 
 	pub fn to_rlp(&self, rlp: &mut RlpStream) {
@@ -90,7 +90,7 @@ impl NodeEndpoint {
 				rlp.append(&(&a.ip().octets()[..]));
 			}
 			SocketAddr::V6(a) => unsafe {
-				let o: *const u8 = mem::transmute(a.ip().segments().as_ptr());
+				let o: *const u8 = a.ip().segments().as_ptr() as *const u8;
 				rlp.append(&slice::from_raw_parts(o, 16));
 			}
 		};
@@ -184,8 +184,8 @@ pub struct Node {
 impl Node {
 	pub fn new(id: NodeId, endpoint: NodeEndpoint) -> Node {
 		Node {
-			id: id,
-			endpoint: endpoint,
+			id,
+			endpoint,
 			peer_type: PeerType::Optional,
 			last_contact: None,
 		}
@@ -214,8 +214,8 @@ impl FromStr for Node {
 		};
 
 		Ok(Node {
-			id: id,
-			endpoint: endpoint,
+			id,
+			endpoint,
 			peer_type: PeerType::Optional,
 			last_contact: None,
 		})
@@ -258,7 +258,7 @@ impl NodeTable {
 	pub fn add_node(&mut self, mut node: Node) {
 		// preserve node last_contact
 		node.last_contact = self.nodes.get(&node.id).and_then(|n| n.last_contact);
-		self.nodes.insert(node.id.clone(), node);
+		self.nodes.insert(node.id, node);
 	}
 
 	/// Returns a list of ordered nodes according to their most recent contact
@@ -315,7 +315,7 @@ impl NodeTable {
 
 	/// Returns node ids sorted by failure percentage, for nodes with the same failure percentage the absolute number of
 	/// failures is considered.
-	pub fn nodes(&self, filter: IpFilter) -> Vec<NodeId> {
+	pub fn nodes(&self, filter: &IpFilter) -> Vec<NodeId> {
 		self.ordered_entries().iter()
 			.filter(|n| n.endpoint.is_allowed(&filter))
 			.map(|n| n.id)
@@ -327,7 +327,7 @@ impl NodeTable {
 	pub fn entries(&self) -> Vec<NodeEntry> {
 		self.ordered_entries().iter().map(|n| NodeEntry {
 			endpoint: n.endpoint.clone(),
-			id: n.id.clone(),
+			id: n.id,
 		}).collect()
 	}
 
@@ -344,7 +344,7 @@ impl NodeTable {
 	/// Apply table changes coming from discovery
 	pub fn update(&mut self, mut update: TableUpdates, reserved: &HashSet<NodeId>) {
 		for (_, node) in update.added.drain() {
-			let entry = self.nodes.entry(node.id.clone()).or_insert_with(|| Node::new(node.id.clone(), node.endpoint.clone()));
+			let entry = self.nodes.entry(node.id).or_insert_with(|| Node::new(node.id, node.endpoint.clone()));
 			entry.endpoint = node.endpoint;
 		}
 		for r in update.removed {
@@ -373,7 +373,7 @@ impl NodeTable {
 		self.useless_nodes.insert(id.clone());
 	}
 
-	/// Atempt to connect to useless nodes again.
+	/// Attempt to connect to useless nodes again.
 	pub fn clear_useless(&mut self) {
 		self.useless_nodes.clear();
 	}
@@ -385,15 +385,14 @@ impl NodeTable {
 			None => return,
 		};
 		if let Err(e) = fs::create_dir_all(&path) {
-			warn!("Error creating node table directory: {:?}", e);
+			warn!(target: "network", "Error creating node table directory: {:?}", e);
 			return;
 		}
 		path.push(NODES_FILE);
-		let node_ids = self.nodes(IpFilter::default());
+		let node_ids = self.nodes(&IpFilter::default());
 		let nodes = node_ids.into_iter()
 			.map(|id| self.nodes.get(&id).expect("self.nodes() only returns node IDs from self.nodes"))
 			.take(MAX_NODES)
-			.map(|node| node.clone())
 			.map(Into::into)
 			.collect();
 		let table = json::NodeTable { nodes };
@@ -401,11 +400,11 @@ impl NodeTable {
 		match fs::File::create(&path) {
 			Ok(file) => {
 				if let Err(e) = serde_json::to_writer_pretty(file, &table) {
-					warn!("Error writing node table file: {:?}", e);
+					warn!(target: "network", "Error writing node table file: {:?}", e);
 				}
 			},
 			Err(e) => {
-				warn!("Error creating node table file: {:?}", e);
+				warn!(target: "network", "Error creating node table file: {:?}", e);
 			}
 		}
 	}
@@ -419,7 +418,7 @@ impl NodeTable {
 		let file = match fs::File::open(&path) {
 			Ok(file) => file,
 			Err(e) => {
-				debug!("Error opening node table file: {:?}", e);
+				debug!(target: "network", "Error opening node table file: {:?}", e);
 				return Default::default();
 			},
 		};
@@ -428,11 +427,11 @@ impl NodeTable {
 			Ok(table) => {
 				table.nodes.into_iter()
 					.filter_map(|n| n.into_node())
-					.map(|n| (n.id.clone(), n))
+					.map(|n| (n.id, n))
 					.collect()
 			},
 			Err(e) => {
-				warn!("Error reading node table file: {:?}", e);
+				warn!(target: "network", "Error reading node table file: {:?}", e);
 				Default::default()
 			},
 		}
@@ -625,19 +624,29 @@ mod tests {
 
 		// unknown - node 6
 
-		let r = table.nodes(IpFilter::default());
+		// nodes are also ordered according to their addition time
+		//
+		// nanosecond precision lost since mac os x high sierra update so let's not compare their order
+		// https://github.com/paritytech/parity-ethereum/issues/9632
+		let r = table.nodes(&IpFilter::default());
 
-		assert_eq!(r[0][..], id4[..]); // most recent success
-		assert_eq!(r[1][..], id3[..]);
+		// most recent success
+		assert!(
+			(r[0] == id4 && r[1] == id3) ||
+			(r[0] == id3 && r[1] == id4)
+		);
 
 		// unknown (old contacts and new nodes), randomly shuffled
 		assert!(
-			r[2][..] == id5[..] && r[3][..] == id6[..] ||
-			r[2][..] == id6[..] && r[3][..] == id5[..]
+			(r[2] == id5 && r[3] == id6) ||
+			(r[2] == id6 && r[3] == id5)
 		);
 
-		assert_eq!(r[4][..], id1[..]); // oldest failure
-		assert_eq!(r[5][..], id2[..]);
+		// oldest failure
+		assert!(
+			(r[4] == id1 && r[5] == id2) ||
+			(r[4] == id2 && r[5] == id1)
+		);
 	}
 
 	#[test]
@@ -662,7 +671,7 @@ mod tests {
 
 		{
 			let table = NodeTable::new(Some(tempdir.path().to_str().unwrap().to_owned()));
-			let r = table.nodes(IpFilter::default());
+			let r = table.nodes(&IpFilter::default());
 			assert_eq!(r[0][..], id2[..]); // latest success
 			assert_eq!(r[1][..], id1[..]); // unknown
 			assert_eq!(r[2][..], id3[..]); // oldest failure

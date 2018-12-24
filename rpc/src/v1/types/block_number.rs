@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -50,6 +50,31 @@ impl BlockNumber {
 		match *self {
 			BlockNumber::Num(ref x) => Some(*x),
 			_ => None,
+		}
+	}
+}
+
+/// BlockNumber to BlockId conversion
+///
+/// NOTE use only for light clients.
+pub trait LightBlockNumber {
+	/// Convert block number to block id.
+	fn to_block_id(self) -> BlockId;
+}
+
+impl LightBlockNumber for BlockNumber {
+	fn to_block_id(self) -> BlockId {
+		// NOTE Here we treat `Pending` as `Latest`.
+		// Since light clients don't produce pending blocks
+		// (they don't have state) we can safely fallback to `Latest`.
+		match self {
+			BlockNumber::Num(n) => BlockId::Number(n),
+			BlockNumber::Earliest => BlockId::Earliest,
+			BlockNumber::Latest => BlockId::Latest,
+			BlockNumber::Pending => {
+				warn!("`Pending` is deprecated and may be removed in future versions. Falling back to `Latest`");
+				BlockId::Latest
+			}
 		}
 	}
 }
@@ -135,4 +160,3 @@ mod tests {
 		block_number_to_id(BlockNumber::Pending);
 	}
 }
-

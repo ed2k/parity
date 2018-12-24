@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -38,9 +38,9 @@ impl<'a> BodyView<'a> {
 	/// ```
 	/// #[macro_use]
 	/// extern crate ethcore;
-	/// 
+	///
 	/// use ethcore::views::{BodyView};
-	/// 
+	///
 	/// fn main() {
 	/// let bytes : &[u8] = &[];
 	/// let body_view = view!(BodyView, bytes);

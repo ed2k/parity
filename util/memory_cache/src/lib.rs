@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -85,6 +85,11 @@ impl<K: Eq + Hash, V: HeapSizeOf> MemoryLruCache<K, V> {
 	/// Currently-used size of values in bytes.
 	pub fn current_size(&self) -> usize {
 		self.cur_size
+	}
+
+	/// Get backing LRU cache instance (read only)
+	pub fn backstore(&self) -> &LruCache<K, V> {
+		&self.inner
 	}
 }
 

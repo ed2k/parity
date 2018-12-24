@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -20,15 +20,13 @@ use std::collections::BTreeMap;
 
 use jsonrpc_core::{BoxFuture, Result};
 use jsonrpc_macros::Trailing;
-
-use node_health::Health;
 use v1::types::{
-	H160, H256, H512, U256, U64, Bytes, CallRequest,
-	Peers, Transaction, RpcSettings, Histogram,
+	H160, H256, H512, U256, U64, H64, Bytes, CallRequest,
+	Peers, Transaction, RpcSettings, Histogram, RecoveredAccount,
 	TransactionStats, LocalTransactionStatus,
 	BlockNumber, ConsensusCapability, VersionInfo,
-	OperationsInfo, DappId, ChainStatus,
-	AccountInfo, HwAccountInfo, RichHeader,
+	OperationsInfo, ChainStatus, Log, Filter,
+	AccountInfo, HwAccountInfo, RichHeader, Receipt,
 };
 
 build_rpc_trait! {
@@ -38,7 +36,7 @@ build_rpc_trait! {
 
 		/// Returns accounts information.
 		#[rpc(name = "parity_accountsInfo")]
-		fn accounts_info(&self, Trailing<DappId>) -> Result<BTreeMap<H160, AccountInfo>>;
+		fn accounts_info(&self) -> Result<BTreeMap<H160, AccountInfo>>;
 
 		/// Returns hardware accounts information.
 		#[rpc(name = "parity_hardwareAccountsInfo")]
@@ -49,8 +47,8 @@ build_rpc_trait! {
 		fn locked_hardware_accounts_info(&self) -> Result<Vec<String>>;
 
 		/// Returns default account for dapp.
-		#[rpc(meta, name = "parity_defaultAccount")]
-		fn default_account(&self, Self::Metadata) -> Result<H160>;
+		#[rpc(name = "parity_defaultAccount")]
+		fn default_account(&self) -> Result<H160>;
 
 		/// Returns current transactions limit.
 		#[rpc(name = "parity_transactionsLimit")]
@@ -141,13 +139,17 @@ build_rpc_trait! {
 
 		/// Returns all pending transactions from transaction queue.
 		#[rpc(name = "parity_pendingTransactions")]
-		fn pending_transactions(&self) -> Result<Vec<Transaction>>;
+		fn pending_transactions(&self, Trailing<usize>) -> Result<Vec<Transaction>>;
 
 		/// Returns all transactions from transaction queue.
 		///
 		/// Some of them might not be ready to be included in a block yet.
 		#[rpc(name = "parity_allTransactions")]
 		fn all_transactions(&self) -> Result<Vec<Transaction>>;
+
+		/// Same as parity_allTransactions, but return only transactions hashes.
+		#[rpc(name = "parity_allTransactionHashes")]
+		fn all_transaction_hashes(&self) -> Result<Vec<H256>>;
 
 		/// Returns all future transactions from transaction queue (deprecated)
 		#[rpc(name = "parity_futureTransactions")]
@@ -161,10 +163,6 @@ build_rpc_trait! {
 		#[rpc(name = "parity_localTransactions")]
 		fn local_transactions(&self) -> Result<BTreeMap<H256, LocalTransactionStatus>>;
 
-		/// Returns current Dapps Server interface and port or an error if dapps server is disabled.
-		#[rpc(name = "parity_dappsUrl")]
-		fn dapps_url(&self) -> Result<String>;
-
 		/// Returns current WS Server interface and port or an error if ws server is disabled.
 		#[rpc(name = "parity_wsUrl")]
 		fn ws_url(&self) -> Result<String>;
@@ -177,13 +175,7 @@ build_rpc_trait! {
 		#[rpc(name = "parity_mode")]
 		fn mode(&self) -> Result<String>;
 
-		/// Returns the chain ID used for transaction signing at the
-		/// current best block. None is returned if not
-		/// available.
-		#[rpc(name = "parity_chainId")]
-		fn chain_id(&self) -> Result<Option<U64>>;
-
-		/// Get the chain name. Returns one of: "foundation", "kovan", &c. of a filename.
+		/// Get the chain name. Returns one of the pre-configured chain names or a filename.
 		#[rpc(name = "parity_chain")]
 		fn chain(&self) -> Result<String>;
 
@@ -216,16 +208,44 @@ build_rpc_trait! {
 		#[rpc(name = "parity_getBlockHeaderByNumber")]
 		fn block_header(&self, Trailing<BlockNumber>) -> BoxFuture<RichHeader>;
 
+		/// Get block receipts.
+		/// Allows you to fetch receipts from the entire block at once.
+		/// If no parameter is provided defaults to `latest`.
+		#[rpc(name = "parity_getBlockReceipts")]
+		fn block_receipts(&self, Trailing<BlockNumber>) -> BoxFuture<Vec<Receipt>>;
+
 		/// Get IPFS CIDv0 given protobuf encoded bytes.
 		#[rpc(name = "parity_cidV0")]
 		fn ipfs_cid(&self, Bytes) -> Result<String>;
 
 		/// Call contract, returning the output data.
-		#[rpc(meta, name = "parity_call")]
-		fn call(&self, Self::Metadata, Vec<CallRequest>, Trailing<BlockNumber>) -> Result<Vec<Bytes>>;
+		#[rpc(name = "parity_call")]
+		fn call(&self, Vec<CallRequest>, Trailing<BlockNumber>) -> Result<Vec<Bytes>>;
 
-		/// Returns node's health report.
-		#[rpc(name = "parity_nodeHealth")]
-		fn node_health(&self) -> BoxFuture<Health>;
+		/// Used for submitting a proof-of-work solution (similar to `eth_submitWork`,
+		/// but returns block hash on success, and returns an explicit error message on failure).
+		#[rpc(name = "parity_submitWorkDetail")]
+		fn submit_work_detail(&self, H64, H256, H256) -> Result<H256>;
+
+		/// Returns the status of the node. Used as the health endpoint.
+		///
+		/// The RPC returns successful response if:
+		/// - The node have a peer (unless running a dev chain)
+		/// - The node is not syncing.
+		///
+		/// Otherwise the RPC returns error.
+		#[rpc(name = "parity_nodeStatus")]
+		fn status(&self) -> Result<()>;
+
+		/// Extracts Address and public key from signature using the r, s and v params. Equivalent to Solidity erecover
+		/// as well as checks the signature for chain replay protection
+		#[rpc(name = "parity_verifySignature")]
+		fn verify_signature(&self, bool, Bytes, H256, H256, U64) -> Result<RecoveredAccount>;
+
+		/// Returns logs matching given filter object.
+		/// Is allowed to skip filling transaction hash for faster query.
+		#[rpc(name = "parity_getLogsNoTransactionHash")]
+		fn logs_no_tx_hash(&self, Filter) -> BoxFuture<Vec<Log>>;
+
 	}
 }

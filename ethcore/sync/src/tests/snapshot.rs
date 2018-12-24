@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -133,11 +133,15 @@ impl SnapshotService for TestSnapshotService {
 			self.block_restoration_chunks.lock().insert(hash, chunk);
 		}
 	}
+
+	fn shutdown(&self) {
+		self.abort_restore();
+	}
 }
 
 #[test]
 fn snapshot_sync() {
-	::env_logger::init().ok();
+	::env_logger::try_init().ok();
 	let mut config = SyncConfig::default();
 	config.warp_sync = WarpSync::Enabled;
 	let mut net = TestNet::new_with_config(5, config);
@@ -150,4 +154,3 @@ fn snapshot_sync() {
 	assert_eq!(net.peer(4).snapshot_service.state_restoration_chunks.lock().len(), net.peer(0).snapshot_service.manifest.as_ref().unwrap().state_hashes.len());
 	assert_eq!(net.peer(4).snapshot_service.block_restoration_chunks.lock().len(), net.peer(0).snapshot_service.manifest.as_ref().unwrap().block_hashes.len());
 }
-

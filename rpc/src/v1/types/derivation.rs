@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -34,7 +34,7 @@ pub enum DerivationType {
 #[derive(Deserialize)]
 pub struct DeriveHash {
 	hash: H256,
-	#[serde(rename="type")]
+	#[serde(rename = "type")]
 	d_type: DerivationType,
 }
 
@@ -42,7 +42,7 @@ pub struct DeriveHash {
 #[derive(Deserialize)]
 pub struct DeriveHierarchicalItem {
 	index: u64,
-	#[serde(rename="type")]
+	#[serde(rename = "type")]
 	d_type: DerivationType,
 }
 

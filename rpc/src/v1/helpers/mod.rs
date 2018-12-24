@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -17,9 +17,7 @@
 #[macro_use]
 pub mod errors;
 
-pub mod accounts;
 pub mod block_import;
-pub mod dapps;
 pub mod dispatch;
 pub mod fake_sign;
 pub mod ipfs;
@@ -27,6 +25,7 @@ pub mod light_fetch;
 pub mod nonce;
 pub mod oneshot;
 pub mod secretstore;
+pub mod eip191;
 
 mod network_settings;
 mod poll_filter;
@@ -36,22 +35,26 @@ mod signer;
 mod signing_queue;
 mod subscribers;
 mod subscription_manager;
+mod work;
+mod signature;
 
-pub use self::dispatch::{Dispatcher, FullDispatcher};
+pub use self::dispatch::{Dispatcher, FullDispatcher, LightDispatcher};
+pub use self::signature::verify_signature;
 pub use self::network_settings::NetworkSettings;
 pub use self::poll_manager::PollManager;
-pub use self::poll_filter::{PollFilter, limit_logs};
+pub use self::poll_filter::{PollFilter, SyncPollFilter, limit_logs};
 pub use self::requests::{
 	TransactionRequest, FilledTransactionRequest, ConfirmationRequest, ConfirmationPayload, CallRequest,
 };
 pub use self::signing_queue::{
-	ConfirmationsQueue, ConfirmationReceiver, ConfirmationResult,
+	ConfirmationsQueue, ConfirmationReceiver, ConfirmationResult, ConfirmationSender,
 	SigningQueue, QueueEvent, DefaultAccount,
 	QUEUE_LIMIT as SIGNING_QUEUE_LIMIT,
 };
 pub use self::signer::SignerService;
 pub use self::subscribers::Subscribers;
 pub use self::subscription_manager::GenericPollManager;
+pub use self::work::submit_work_detail;
 
 pub fn to_url(address: &Option<::Host>) -> Option<String> {
 	address.as_ref().map(|host| (**host).to_owned())

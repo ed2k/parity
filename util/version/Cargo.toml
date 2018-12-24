@@ -2,8 +2,8 @@
 # Make sure to update the service if it's moved or the structure is changed.
 [package]
 name = "parity-version"
-# NOTE: this value is used for Parity version string (via env CARGO_PKG_VERSION)
-version = "1.12.0"
+# NOTE: this value is used for Parity Ethereum version string (via env CARGO_PKG_VERSION)
+version = "2.3.0"
 authors = ["Parity Technologies <admin@parity.io>"]
 build = "build.rs"
 
@@ -12,18 +12,17 @@ build = "build.rs"
 # Used by auto-updater and for Parity version string.
 track = "nightly"
 
-# Indicates a critical release in this track (i.e. consensus issue)
-critical = false
-
-# Latest supported fork blocks for various networks. Used ONLY by auto-updater.
-[package.metadata.forks]
-foundation = 4370000
-ropsten = 10
-kovan = 6600000
+# Network specific settings, used ONLY by auto-updater.
+# Latest supported fork blocks.
+# Indicates a critical release in this track (i.e. consensus issue).
+[package.metadata.networks]
+foundation = { forkBlock = 4370000, critical = false }
+ropsten = { forkBlock = 4230000, critical = false }
+kovan = { forkBlock = 6600000, critical = false }
 
 [dependencies]
-ethcore-bytes = { path = "../bytes" }
-rlp = { path = "../rlp" }
+parity-bytes = "0.1"
+rlp = { version = "0.3.0", features = ["ethereum"] }
 target_info = "0.1"
 
 [build-dependencies]

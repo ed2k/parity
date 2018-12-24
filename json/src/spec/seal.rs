@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -22,16 +22,18 @@ use bytes::Bytes;
 
 /// Ethereum seal.
 #[derive(Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct Ethereum {
 	/// Seal nonce.
 	pub nonce: H64,
 	/// Seal mix hash.
-	#[serde(rename="mixHash")]
 	pub mix_hash: H256,
 }
 
 /// AuthorityRound seal.
 #[derive(Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AuthorityRoundSeal {
 	/// Seal step.
 	pub step: Uint,
@@ -41,6 +43,7 @@ pub struct AuthorityRoundSeal {
 
 /// Tendermint seal.
 #[derive(Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TendermintSeal {
 	/// Seal round.
 	pub round: Uint,
@@ -52,18 +55,16 @@ pub struct TendermintSeal {
 
 /// Seal variants.
 #[derive(Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub enum Seal {
 	/// Ethereum seal.
-	#[serde(rename="ethereum")]
 	Ethereum(Ethereum),
 	/// AuthorityRound seal.
-	#[serde(rename="authorityRound")]
 	AuthorityRound(AuthorityRoundSeal),
 	/// Tendermint seal.
-	#[serde(rename="tendermint")]
 	Tendermint(TendermintSeal),
 	/// Generic seal.
-	#[serde(rename="generic")]
 	Generic(Bytes),
 }
 

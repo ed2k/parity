@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -50,6 +50,10 @@ impl Notifier {
 
 	/// Notify listeners about all currently pending transactions.
 	pub fn notify(&mut self) {
+		if self.pending.is_empty() {
+			return;
+		}
+
 		for l in &self.listeners {
 			(l)(&self.pending);
 		}
@@ -63,7 +67,6 @@ impl txpool::Listener<Transaction> for Notifier {
 		self.pending.push(*tx.hash());
 	}
 }
-
 
 /// Transaction pool logger.
 #[derive(Default, Debug)]
@@ -108,11 +111,10 @@ impl txpool::Listener<Transaction> for Logger {
 		debug!(target: "txqueue", "[{:?}] Canceled by the user.", tx.hash());
 	}
 
-	fn mined(&mut self, tx: &Arc<Transaction>) {
-		debug!(target: "txqueue", "[{:?}] Mined.", tx.hash());
+	fn culled(&mut self, tx: &Arc<Transaction>) {
+		debug!(target: "txqueue", "[{:?}] Culled or mined.", tx.hash());
 	}
 }
-
 
 #[cfg(test)]
 mod tests {

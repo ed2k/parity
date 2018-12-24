@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -20,14 +20,16 @@ use uint::Uint;
 
 /// Authority params deserialization.
 #[derive(Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct NullEngineParams {
 	/// Block reward.
-	#[serde(rename="blockReward")]
 	pub block_reward: Option<Uint>,
 }
 
 /// Null engine descriptor
 #[derive(Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NullEngine {
 	/// Ethash params.
 	pub params: NullEngineParams,

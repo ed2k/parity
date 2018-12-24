@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -21,7 +21,7 @@ use bytes::ToPretty;
 
 use ethcore::account_provider::AccountProvider;
 use ethcore::client::TestBlockChainClient;
-use parity_reactor::EventLoop;
+use parity_runtime::Runtime;
 use parking_lot::Mutex;
 use rlp::encode;
 use transaction::{Transaction, Action, SignedTransaction};
@@ -36,6 +36,7 @@ use v1::helpers::{nonce, SigningQueue, SignerService, FilledTransactionRequest, 
 use v1::helpers::dispatch::{FullDispatcher, eth_data_hash};
 
 struct SignerTester {
+	_runtime: Runtime,
 	signer: Arc<SignerService>,
 	accounts: Arc<AccountProvider>,
 	io: IoHandler<Metadata>,
@@ -56,26 +57,25 @@ fn miner_service() -> Arc<TestMinerService> {
 }
 
 fn signer_tester() -> SignerTester {
+	let runtime = Runtime::with_thread_count(1);
 	let signer = Arc::new(SignerService::new_test(false));
 	let accounts = accounts_provider();
-	let opt_accounts = Some(accounts.clone());
 	let client = blockchain_client();
 	let miner = miner_service();
-	let reservations = Arc::new(Mutex::new(nonce::Reservations::new()));
-	let event_loop = EventLoop::spawn();
+	let reservations = Arc::new(Mutex::new(nonce::Reservations::new(runtime.executor())));
 
 	let dispatcher = FullDispatcher::new(client, miner.clone(), reservations, 50);
 	let mut io = IoHandler::default();
-	io.extend_with(SignerClient::new(&opt_accounts, dispatcher, &signer, event_loop.remote()).to_delegate());
+	io.extend_with(SignerClient::new(&accounts, dispatcher, &signer, runtime.executor()).to_delegate());
 
 	SignerTester {
+		_runtime: runtime,
 		signer: signer,
 		accounts: accounts,
 		io: io,
 		miner: miner,
 	}
 }
-
 
 #[test]
 fn should_return_list_of_items_to_confirm() {
@@ -91,14 +91,14 @@ fn should_return_list_of_items_to_confirm() {
 		data: vec![],
 		nonce: None,
 		condition: None,
-	}), Origin::Dapps("http://parity.io".into())).unwrap();
+	}), Origin::Unknown).unwrap();
 	let _sign_future = tester.signer.add_request(ConfirmationPayload::EthSignMessage(1.into(), vec![5].into()), Origin::Unknown).unwrap();
 
 	// when
 	let request = r#"{"jsonrpc":"2.0","method":"signer_requestsToConfirm","params":[],"id":1}"#;
 	let response = concat!(
 		r#"{"jsonrpc":"2.0","result":["#,
-		r#"{"id":"0x1","origin":{"dapp":"http://parity.io"},"payload":{"sendTransaction":{"condition":null,"data":"0x","from":"0x0000000000000000000000000000000000000001","gas":"0x989680","gasPrice":"0x2710","nonce":null,"to":"0xd46e8dd67c5d32be8058bb8eb970870f07244567","value":"0x1"}}},"#,
+		r#"{"id":"0x1","origin":"unknown","payload":{"sendTransaction":{"condition":null,"data":"0x","from":"0x0000000000000000000000000000000000000001","gas":"0x989680","gasPrice":"0x2710","nonce":null,"to":"0xd46e8dd67c5d32be8058bb8eb970870f07244567","value":"0x1"}}},"#,
 		r#"{"id":"0x2","origin":"unknown","payload":{"sign":{"address":"0x0000000000000000000000000000000000000001","data":"0x05"}}}"#,
 		r#"],"id":1}"#
 	);
@@ -106,7 +106,6 @@ fn should_return_list_of_items_to_confirm() {
 	// then
 	assert_eq!(tester.io.handle_request_sync(&request), Some(response.to_owned()));
 }
-
 
 #[test]
 fn should_reject_transaction_from_queue_without_dispatching() {
@@ -181,7 +180,7 @@ fn should_not_remove_sign_if_password_is_invalid() {
 fn should_confirm_transaction_and_dispatch() {
 	//// given
 	let tester = signer_tester();
-	let address = tester.accounts.new_account("test").unwrap();
+	let address = tester.accounts.new_account(&"test".into()).unwrap();
 	let recipient = Address::from_str("d46e8dd67c5d32be8058bb8eb970870f07244567").unwrap();
 	let _confirmation_future = tester.signer.add_request(ConfirmationPayload::SendTransaction(FilledTransactionRequest {
 		from: address,
@@ -250,7 +249,7 @@ fn should_alter_the_sender_and_nonce() {
 		data: vec![]
 	};
 
-	let address = tester.accounts.new_account("test").unwrap();
+	let address = tester.accounts.new_account(&"test".into()).unwrap();
 	let signature = tester.accounts.sign(address, Some("test".into()), t.hash(None)).unwrap();
 	let t = t.with_signature(signature, None);
 
@@ -277,7 +276,7 @@ fn should_alter_the_sender_and_nonce() {
 fn should_confirm_transaction_with_token() {
 	// given
 	let tester = signer_tester();
-	let address = tester.accounts.new_account("test").unwrap();
+	let address = tester.accounts.new_account(&"test".into()).unwrap();
 	let recipient = Address::from_str("d46e8dd67c5d32be8058bb8eb970870f07244567").unwrap();
 	let _confirmation_future = tester.signer.add_request(ConfirmationPayload::SendTransaction(FilledTransactionRequest {
 		from: address,
@@ -308,7 +307,7 @@ fn should_confirm_transaction_with_token() {
 	let request = r#"{
 		"jsonrpc":"2.0",
 		"method":"signer_confirmRequestWithToken",
-		"params":["0x1", {"gasPrice":"0x1000"}, ""#.to_owned() + &token + r#""],
+		"params":["0x1", {"gasPrice":"0x1000"}, ""#.to_owned() + token.as_str() + r#""],
 		"id":1
 	}"#;
 	let response = r#"{"jsonrpc":"2.0","result":{"result":""#.to_owned() +
@@ -326,7 +325,7 @@ fn should_confirm_transaction_with_token() {
 fn should_confirm_transaction_with_rlp() {
 	// given
 	let tester = signer_tester();
-	let address = tester.accounts.new_account("test").unwrap();
+	let address = tester.accounts.new_account(&"test".into()).unwrap();
 	let recipient = Address::from_str("d46e8dd67c5d32be8058bb8eb970870f07244567").unwrap();
 	let _confirmation_future = tester.signer.add_request(ConfirmationPayload::SendTransaction(FilledTransactionRequest {
 		from: address,
@@ -373,7 +372,7 @@ fn should_confirm_transaction_with_rlp() {
 fn should_return_error_when_sender_does_not_match() {
 	// given
 	let tester = signer_tester();
-	let address = tester.accounts.new_account("test").unwrap();
+	let address = tester.accounts.new_account(&"test".into()).unwrap();
 	let recipient = Address::from_str("d46e8dd67c5d32be8058bb8eb970870f07244567").unwrap();
 	let _confirmation_future = tester.signer.add_request(ConfirmationPayload::SendTransaction(FilledTransactionRequest {
 		from: Address::default(),
@@ -420,7 +419,7 @@ fn should_return_error_when_sender_does_not_match() {
 fn should_confirm_sign_transaction_with_rlp() {
 	// given
 	let tester = signer_tester();
-	let address = tester.accounts.new_account("test").unwrap();
+	let address = tester.accounts.new_account(&"test".into()).unwrap();
 	let recipient = Address::from_str("d46e8dd67c5d32be8058bb8eb970870f07244567").unwrap();
 	let _confirmation_future = tester.signer.add_request(ConfirmationPayload::SignTransaction(FilledTransactionRequest {
 		from: address,
@@ -485,7 +484,7 @@ fn should_confirm_sign_transaction_with_rlp() {
 fn should_confirm_data_sign_with_signature() {
 	// given
 	let tester = signer_tester();
-	let address = tester.accounts.new_account("test").unwrap();
+	let address = tester.accounts.new_account(&"test".into()).unwrap();
 	let _confirmation_future = tester.signer.add_request(ConfirmationPayload::EthSignMessage(
 		address,
 		vec![1, 2, 3, 4].into(),
@@ -515,7 +514,7 @@ fn should_confirm_data_sign_with_signature() {
 fn should_confirm_decrypt_with_phrase() {
 	// given
 	let tester = signer_tester();
-	let address = tester.accounts.new_account("test").unwrap();
+	let address = tester.accounts.new_account(&"test".into()).unwrap();
 	let _confirmation_future = tester.signer.add_request(ConfirmationPayload::Decrypt(
 		address,
 		vec![1, 2, 3, 4].into(),

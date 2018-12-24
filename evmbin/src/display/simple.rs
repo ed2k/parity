@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -27,11 +27,16 @@ use info as vm;
 pub struct Informant;
 
 impl vm::Informant for Informant {
+
+	type Sink = ();
+
 	fn before_test(&mut self, name: &str, action: &str) {
 		println!("Test: {} ({})", name, action);
 	}
 
-	fn finish(result: vm::RunResult<Self::Output>) {
+	fn clone_sink(&self) -> Self::Sink { () }
+
+	fn finish(result: vm::RunResult<Self::Output>, _sink: &mut Self::Sink) {
 		match result {
 			Ok(success) => {
 				println!("Output: 0x{}", success.output.to_hex());
@@ -49,7 +54,7 @@ impl vm::Informant for Informant {
 impl trace::VMTracer for Informant {
 	type Output = ();
 
-	fn prepare_subtrace(&self, _code: &[u8]) -> Self where Self: Sized { Default::default() }
-	fn done_subtrace(&mut self, _sub: Self) {}
+	fn prepare_subtrace(&mut self, _code: &[u8]) { Default::default() }
+	fn done_subtrace(&mut self) {}
 	fn drain(self) -> Option<()> { None }
 }

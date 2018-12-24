@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -16,23 +16,23 @@
 
 use std::collections::{VecDeque, HashSet, HashMap};
 use std::sync::Arc;
-use std::time::Duration;
 use ethereum_types::H256;
 use parking_lot::{RwLock, Mutex};
 use bytes::Bytes;
 use network::{self, PeerId, ProtocolId, PacketId, SessionInfo};
 use tests::snapshot::*;
 use ethcore::client::{TestBlockChainClient, BlockChainClient, Client as EthcoreClient,
-	ClientConfig, ChainNotify, ChainRoute, ChainMessageType, ClientIoMessage};
+	ClientConfig, ChainNotify, NewBlocks, ChainMessageType, ClientIoMessage};
 use ethcore::header::BlockNumber;
 use ethcore::snapshot::SnapshotService;
 use ethcore::spec::Spec;
 use ethcore::account_provider::AccountProvider;
 use ethcore::miner::Miner;
+use ethcore::test_helpers;
 use sync_io::SyncIo;
 use io::{IoChannel, IoContext, IoHandler};
 use api::WARP_SYNC_PROTOCOL_ID;
-use chain::{ChainSync, ETH_PROTOCOL_VERSION_63, PAR_PROTOCOL_VERSION_3};
+use chain::{ChainSync, ETH_PROTOCOL_VERSION_63, PAR_PROTOCOL_VERSION_3, PRIVATE_TRANSACTION_PACKET, SIGNED_PRIVATE_TRANSACTION_PACKET, SyncSupplier};
 use SyncConfig;
 use private_tx::SimplePrivateTxHandler;
 
@@ -229,8 +229,10 @@ impl<C> EthPeer<C> where C: FlushingBlockChainClient {
 		let mut io = TestIo::new(&*self.chain, &self.snapshot_service, &self.queue, None);
 		match message {
 			ChainMessageType::Consensus(data) => self.sync.write().propagate_consensus_packet(&mut io, data),
-			ChainMessageType::PrivateTransaction(data) => self.sync.write().propagate_private_transaction(&mut io, data),
-			ChainMessageType::SignedPrivateTransaction(data) => self.sync.write().propagate_signed_private_transaction(&mut io, data),
+			ChainMessageType::PrivateTransaction(transaction_hash, data) =>
+				self.sync.write().propagate_private_transaction(&mut io, transaction_hash, PRIVATE_TRANSACTION_PACKET, data),
+			ChainMessageType::SignedPrivateTransaction(transaction_hash, data) =>
+				self.sync.write().propagate_private_transaction(&mut io, transaction_hash, SIGNED_PRIVATE_TRANSACTION_PACKET, data),
 		}
 	}
 
@@ -268,7 +270,7 @@ impl<C: FlushingBlockChainClient> Peer for EthPeer<C> {
 
 	fn receive_message(&self, from: PeerId, msg: TestPacket) -> HashSet<PeerId> {
 		let mut io = TestIo::new(&*self.chain, &self.snapshot_service, &self.queue, Some(from));
-		ChainSync::dispatch_packet(&self.sync, &mut io, from, msg.packet_id, &msg.data);
+		SyncSupplier::dispatch_packet(&self.sync, &mut io, from, msg.packet_id, &msg.data);
 		self.chain.flush();
 		io.to_disconnect.clone()
 	}
@@ -283,10 +285,12 @@ impl<C: FlushingBlockChainClient> Peer for EthPeer<C> {
 	}
 
 	fn sync_step(&self) {
+		let mut io = TestIo::new(&*self.chain, &self.snapshot_service, &self.queue, None);
 		self.chain.flush();
-		self.sync.write().maintain_peers(&mut TestIo::new(&*self.chain, &self.snapshot_service, &self.queue, None));
-		self.sync.write().maintain_sync(&mut TestIo::new(&*self.chain, &self.snapshot_service, &self.queue, None));
-		self.sync.write().propagate_new_transactions(&mut TestIo::new(&*self.chain, &self.snapshot_service, &self.queue, None));
+		self.sync.write().maintain_peers(&mut io);
+		self.sync.write().maintain_sync(&mut io);
+		self.sync.write().continue_sync(&mut io);
+		self.sync.write().propagate_new_transactions(&mut io);
 	}
 
 	fn restart_sync(&self) {
@@ -384,7 +388,7 @@ impl TestNet<EthPeer<EthcoreClient>> {
 		let client = EthcoreClient::new(
 			ClientConfig::default(),
 			&spec,
-			Arc::new(::kvdb_memorydb::create(::ethcore::db::NUM_COLUMNS.unwrap_or(0))),
+			test_helpers::new_db(),
 			miner.clone(),
 			channel.clone()
 		).unwrap();
@@ -530,23 +534,18 @@ impl IoHandler<ClientIoMessage> for TestIoHandler {
 }
 
 impl ChainNotify for EthPeer<EthcoreClient> {
-	fn new_blocks(&self,
-		imported: Vec<H256>,
-		invalid: Vec<H256>,
-		route: ChainRoute,
-		sealed: Vec<H256>,
-		proposed: Vec<Bytes>,
-		_duration: Duration)
+	fn new_blocks(&self, new_blocks: NewBlocks)
 	{
-		let (enacted, retracted) = route.into_enacted_retracted();
+		if new_blocks.has_more_blocks_to_import { return }
+		let (enacted, retracted) = new_blocks.route.into_enacted_retracted();
 
 		self.new_blocks_queue.write().push_back(NewBlockMessage {
-			imported,
-			invalid,
+			imported: new_blocks.imported,
+			invalid: new_blocks.invalid,
 			enacted,
 			retracted,
-			sealed,
-			proposed,
+			sealed: new_blocks.sealed,
+			proposed: new_blocks.proposed,
 		});
 	}
 

@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -26,7 +26,7 @@ use parking_lot::Mutex;
 use ethcore::account_provider::AccountProvider;
 use ethereum_types::{H128, H256, Address};
 use ethjson;
-use ethkey::{Signature, Public};
+use ethkey::{Signature, Password, Public};
 use crypto;
 use futures::Future;
 use fetch::{Fetch, Client as FetchClient, Method, BodyReader, Request};
@@ -71,7 +71,7 @@ pub struct EncryptorConfig {
 	/// Account used for signing requests to key server
 	pub key_server_account: Option<Address>,
 	/// Passwords used to unlock accounts
-	pub passwords: Vec<String>,
+	pub passwords: Vec<Password>,
 }
 
 struct EncryptionSession {
@@ -125,9 +125,9 @@ impl SecretStoreEncryptor {
 
 		// send HTTP request
 		let method = if use_post {
-			Method::Post
+			Method::POST
 		} else {
-			Method::Get
+			Method::GET
 		};
 
 		let url = Url::from_str(&url).map_err(|e| ErrorKind::Encrypt(e.to_string()))?;
@@ -208,7 +208,7 @@ impl Encryptor for SecretStoreEncryptor {
 		let key = match self.retrieve_key("", false, contract_address, &*accounts) {
 			Ok(key) => Ok(key),
 			Err(Error(ErrorKind::EncryptionKeyNotFound(_), _)) => {
-				trace!("Key for account wasnt found in sstore. Creating. Address: {:?}", contract_address);
+				trace!(target: "privatetx", "Key for account wasnt found in sstore. Creating. Address: {:?}", contract_address);
 				self.retrieve_key(&format!("/{}", self.config.threshold), true, contract_address, &*accounts)
 			}
 			Err(err) => Err(err),

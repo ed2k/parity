@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -66,11 +66,7 @@ impl<S : fmt::Display> Stack<S> for VecStack<S> {
 	}
 
 	fn pop_back(&mut self) -> S {
-		let val = self.stack.pop();
-		match val {
-			Some(x) => x,
-			None => panic!("Tried to pop from empty stack.")
-		}
+		self.stack.pop().expect("instruction validation prevents from popping too many items; qed")
 	}
 
 	fn pop_n(&mut self, no_of_elems: usize) -> &[S] {
@@ -95,4 +91,3 @@ impl<S : fmt::Display> Stack<S> for VecStack<S> {
 		&self.stack[self.stack.len() - no_from_top .. self.stack.len()]
 	}
 }
-

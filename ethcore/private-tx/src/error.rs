@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -16,17 +16,19 @@
 
 use ethereum_types::Address;
 use rlp::DecoderError;
-use trie::TrieError;
+use ethtrie::TrieError;
 use ethcore::account_provider::SignError;
 use ethcore::error::{Error as EthcoreError, ExecutionError};
 use transaction::Error as TransactionError;
 use ethkey::Error as KeyError;
+use txpool::Error as TxPoolError;
 
 error_chain! {
 	foreign_links {
 		Io(::std::io::Error) #[doc = "Error concerning the Rust standard library's IO subsystem."];
 		Decoder(DecoderError) #[doc = "RLP decoding error."];
 		Trie(TrieError) #[doc = "Error concerning TrieDBs."];
+		Txpool(TxPoolError) #[doc = "Tx pool error."];
 	}
 
 	errors {
@@ -205,4 +207,3 @@ impl<E> From<Box<E>> for Error where Error: From<E> {
 		Error::from(*err)
 	}
 }
-

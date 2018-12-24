@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -21,10 +21,10 @@ use transaction;
 #[serde(deny_unknown_fields)]
 pub enum TransactionCondition {
 	/// Valid at this minimum block number.
-	#[serde(rename="block")]
+	#[serde(rename = "block")]
 	Number(u64),
 	/// Valid at given unix time.
-	#[serde(rename="time")]
+	#[serde(rename = "time")]
 	Timestamp(u64),
 }
 
@@ -64,4 +64,3 @@ mod tests {
 		assert_eq!(transaction::Condition::Timestamp(100), TransactionCondition::Timestamp(100).into());
 	}
 }
-

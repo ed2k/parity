@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -36,25 +36,25 @@ use transaction::{self, Transaction, LocalizedTransaction, SignedTransaction, Ac
 use blockchain::{TreeRoute, BlockReceipts};
 use client::{
 	Nonce, Balance, ChainInfo, BlockInfo, ReopenBlock, CallContract, TransactionInfo, RegistryInfo,
-	PrepareOpenBlock, BlockChainClient, BlockChainInfo, BlockStatus, BlockId,
-	TransactionId, UncleId, TraceId, TraceFilter, LastHashes, CallAnalytics, BlockImportError,
+	PrepareOpenBlock, BlockChainClient, BlockChainInfo, BlockStatus, BlockId, Mode,
+	TransactionId, UncleId, TraceId, TraceFilter, LastHashes, CallAnalytics,
 	ProvingBlockChainClient, ScheduleInfo, ImportSealedBlock, BroadcastProposalBlock, ImportBlock, StateOrBlock,
-	Call, StateClient, EngineInfo, AccountData, BlockChain, BlockProducer, SealedBlockImporter, IoClient
+	Call, StateClient, EngineInfo, AccountData, BlockChain, BlockProducer, SealedBlockImporter, IoClient,
+	BadBlocks,
 };
 use db::{NUM_COLUMNS, COL_STATE};
 use header::{Header as BlockHeader, BlockNumber};
 use filter::Filter;
 use log_entry::LocalizedLogEntry;
 use receipt::{Receipt, LocalizedReceipt, TransactionOutcome};
-use error::ImportResult;
+use error::{Error, EthcoreResult};
 use vm::Schedule;
-use miner::{Miner, MinerService};
+use miner::{self, Miner, MinerService};
 use spec::Spec;
 use types::basic_account::BasicAccount;
-use types::mode::Mode;
 use types::pruning_info::PruningInfo;
-
 use verification::queue::QueueInfo;
+use verification::queue::kind::blocks::Unverified;
 use block::{OpenBlock, SealedBlock, ClosedBlock};
 use executive::Executed;
 use error::CallError;
@@ -63,7 +63,7 @@ use state_db::StateDB;
 use header::Header;
 use encoded;
 use engines::EthEngine;
-use trie;
+use ethtrie;
 use state::StateInfo;
 use views::BlockView;
 
@@ -95,6 +95,8 @@ pub struct TestBlockChainClient {
 	pub receipts: RwLock<HashMap<TransactionId, LocalizedReceipt>>,
 	/// Logs
 	pub logs: RwLock<Vec<LocalizedLogEntry>>,
+	/// Should return errors on logs.
+	pub error_on_logs: RwLock<Option<BlockId>>,
 	/// Block queue size.
 	pub queue_size: AtomicUsize,
 	/// Miner
@@ -116,7 +118,7 @@ pub struct TestBlockChainClient {
 }
 
 /// Used for generating test client blocks.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum EachBlockWith {
 	/// Plain block.
 	Nothing,
@@ -179,6 +181,7 @@ impl TestBlockChainClient {
 			traces: RwLock::new(None),
 			history: RwLock::new(None),
 			disabled: AtomicBool::new(false),
+			error_on_logs: RwLock::new(None),
 		};
 
 		// insert genesis hash.
@@ -234,68 +237,73 @@ impl TestBlockChainClient {
 		*self.logs.write() = logs;
 	}
 
-	/// Add blocks to test client.
-	pub fn add_blocks(&self, count: usize, with: EachBlockWith) {
-		let len = self.numbers.read().len();
-		for n in len..(len + count) {
-			let mut header = BlockHeader::new();
-			header.set_difficulty(From::from(n));
-			header.set_parent_hash(self.last_hash.read().clone());
-			header.set_number(n as BlockNumber);
-			header.set_gas_limit(U256::from(1_000_000));
-			header.set_extra_data(self.extra_data.clone());
-			let uncles = match with {
-				EachBlockWith::Uncle | EachBlockWith::UncleAndTransaction => {
-					let mut uncles = RlpStream::new_list(1);
-					let mut uncle_header = BlockHeader::new();
-					uncle_header.set_difficulty(From::from(n));
-					uncle_header.set_parent_hash(self.last_hash.read().clone());
-					uncle_header.set_number(n as BlockNumber);
-					uncles.append(&uncle_header);
-					header.set_uncles_hash(keccak(uncles.as_raw()));
-					uncles
-				},
-				_ => RlpStream::new_list(0)
-			};
-			let txs = match with {
-				EachBlockWith::Transaction | EachBlockWith::UncleAndTransaction => {
-					let mut txs = RlpStream::new_list(1);
-					let keypair = Random.generate().unwrap();
-					// Update nonces value
-					self.nonces.write().insert(keypair.address(), U256::one());
-					let tx = Transaction {
-						action: Action::Create,
-						value: U256::from(100),
-						data: "3331600055".from_hex().unwrap(),
-						gas: U256::from(100_000),
-						gas_price: U256::from(200_000_000_000u64),
-						nonce: U256::zero()
-					};
-					let signed_tx = tx.sign(keypair.secret(), None);
-					txs.append(&signed_tx);
-					txs.out()
-				},
-				_ => ::rlp::EMPTY_LIST_RLP.to_vec()
-			};
-
-			let mut rlp = RlpStream::new_list(3);
-			rlp.append(&header);
-			rlp.append_raw(&txs, 1);
-			rlp.append_raw(uncles.as_raw(), 1);
-			self.import_block(rlp.as_raw().to_vec()).unwrap();
-		}
+	/// Set return errors on logs.
+	pub fn set_error_on_logs(&self, val: Option<BlockId>) {
+		*self.error_on_logs.write() = val;
 	}
 
-	/// Make a bad block by setting invalid extra data.
-	pub fn corrupt_block(&self, n: BlockNumber) {
-		let hash = self.block_hash(BlockId::Number(n)).unwrap();
-		let mut header: BlockHeader = self.block_header(BlockId::Number(n)).unwrap().decode().expect("decoding failed");
-		header.set_extra_data(b"This extra data is way too long to be considered valid".to_vec());
+	/// Add a block to test client.
+	pub fn add_block<F>(&self, with: EachBlockWith, hook: F)
+		where F: Fn(BlockHeader) -> BlockHeader
+	{
+		let n = self.numbers.read().len();
+
+		let mut header = BlockHeader::new();
+		header.set_difficulty(From::from(n));
+		header.set_parent_hash(self.last_hash.read().clone());
+		header.set_number(n as BlockNumber);
+		header.set_gas_limit(U256::from(1_000_000));
+		header.set_extra_data(self.extra_data.clone());
+
+		header = hook(header);
+
+		let uncles = match with {
+			EachBlockWith::Uncle | EachBlockWith::UncleAndTransaction => {
+				let mut uncles = RlpStream::new_list(1);
+				let mut uncle_header = BlockHeader::new();
+				uncle_header.set_difficulty(From::from(n));
+				uncle_header.set_parent_hash(self.last_hash.read().clone());
+				uncle_header.set_number(n as BlockNumber);
+				uncles.append(&uncle_header);
+				header.set_uncles_hash(keccak(uncles.as_raw()));
+				uncles
+			},
+			_ => RlpStream::new_list(0)
+		};
+		let txs = match with {
+			EachBlockWith::Transaction | EachBlockWith::UncleAndTransaction => {
+				let mut txs = RlpStream::new_list(1);
+				let keypair = Random.generate().unwrap();
+				// Update nonces value
+				self.nonces.write().insert(keypair.address(), U256::one());
+				let tx = Transaction {
+					action: Action::Create,
+					value: U256::from(100),
+					data: "3331600055".from_hex().unwrap(),
+					gas: U256::from(100_000),
+					gas_price: U256::from(200_000_000_000u64),
+					nonce: U256::zero()
+				};
+				let signed_tx = tx.sign(keypair.secret(), None);
+				txs.append(&signed_tx);
+				txs.out()
+			},
+			_ => ::rlp::EMPTY_LIST_RLP.to_vec()
+		};
+
 		let mut rlp = RlpStream::new_list(3);
 		rlp.append(&header);
-		rlp.append_raw(&::rlp::NULL_RLP, 1);
-		rlp.append_raw(&::rlp::NULL_RLP, 1);
-		self.blocks.write().insert(hash, rlp.out());
+		rlp.append_raw(&txs, 1);
+		rlp.append_raw(uncles.as_raw(), 1);
+		let unverified = Unverified::from_rlp(rlp.out()).unwrap();
+		self.import_block(unverified).unwrap();
+	}
+
+	/// Add a sequence of blocks to test client.
+	pub fn add_blocks(&self, count: usize, with: EachBlockWith) {
+		for _ in 0..count {
+			self.add_block(with, |header| header);
+		}
 	}
 
 	/// Make a bad block by setting invalid parent hash.
@@ -375,7 +383,7 @@ impl ReopenBlock for TestBlockChainClient {
 }
 
 impl PrepareOpenBlock for TestBlockChainClient {
-	fn prepare_open_block(&self, author: Address, gas_range_target: (U256, U256), extra_data: Bytes) -> OpenBlock {
+	fn prepare_open_block(&self, author: Address, gas_range_target: (U256, U256), extra_data: Bytes) -> Result<OpenBlock, Error> {
 		let engine = &*self.spec.engine;
 		let genesis_header = self.spec.genesis_header();
 		let db = self.spec.ensure_db_good(get_temp_state_db(), &Default::default()).unwrap();
@@ -393,10 +401,10 @@ impl PrepareOpenBlock for TestBlockChainClient {
 			extra_data,
 			false,
 			&mut Vec::new().into_iter(),
-		).expect("Opening block for tests will not fail.");
+		)?;
 		// TODO [todr] Override timestamp for predictability
 		open_block.set_timestamp(*self.latest_block_timestamp.read());
-		open_block
+		Ok(open_block)
 	}
 }
 
@@ -407,7 +415,7 @@ impl ScheduleInfo for TestBlockChainClient {
 }
 
 impl ImportSealedBlock for TestBlockChainClient {
-	fn import_sealed_block(&self, _block: SealedBlock) -> ImportResult {
+	fn import_sealed_block(&self, _block: SealedBlock) -> EthcoreResult<H256> {
 		Ok(H256::default())
 	}
 }
@@ -514,8 +522,8 @@ impl RegistryInfo for TestBlockChainClient {
 }
 
 impl ImportBlock for TestBlockChainClient {
-	fn import_block(&self, b: Bytes) -> Result<H256, BlockImportError> {
-		let header = view!(BlockView, &b).header();
+	fn import_block(&self, unverified: Unverified) -> EthcoreResult<H256> {
+		let header = unverified.header;
 		let h = header.hash();
 		let number: usize = header.number() as usize;
 		if number > self.blocks.read().len() {
@@ -541,7 +549,7 @@ impl ImportBlock for TestBlockChainClient {
 				*difficulty = *difficulty + header.difficulty().clone();
 			}
 			mem::replace(&mut *self.last_hash.write(), h.clone());
-			self.blocks.write().insert(h.clone(), b);
+			self.blocks.write().insert(h.clone(), unverified.bytes);
 			self.numbers.write().insert(number, h.clone());
 			let mut parent_hash = header.parent_hash().clone();
 			if number > 0 {
@@ -554,7 +562,7 @@ impl ImportBlock for TestBlockChainClient {
 			}
 		}
 		else {
-			self.blocks.write().insert(h.clone(), b.to_vec());
+			self.blocks.write().insert(h.clone(), unverified.bytes);
 		}
 		Ok(h)
 	}
@@ -582,10 +590,10 @@ impl Call for TestBlockChainClient {
 }
 
 impl StateInfo for () {
-	fn nonce(&self, _address: &Address) -> trie::Result<U256> { unimplemented!() }
-	fn balance(&self, _address: &Address) -> trie::Result<U256> { unimplemented!() }
-	fn storage_at(&self, _address: &Address, _key: &H256) -> trie::Result<H256> { unimplemented!() }
-	fn code(&self, _address: &Address) -> trie::Result<Option<Arc<Bytes>>> { unimplemented!() }
+	fn nonce(&self, _address: &Address) -> ethtrie::Result<U256> { unimplemented!() }
+	fn balance(&self, _address: &Address) -> ethtrie::Result<U256> { unimplemented!() }
+	fn storage_at(&self, _address: &Address, _key: &H256) -> ethtrie::Result<H256> { unimplemented!() }
+	fn code(&self, _address: &Address) -> ethtrie::Result<Option<Arc<Bytes>>> { unimplemented!() }
 }
 
 impl StateClient for TestBlockChainClient {
@@ -607,13 +615,26 @@ impl EngineInfo for TestBlockChainClient {
 	}
 }
 
+impl BadBlocks for TestBlockChainClient {
+	fn bad_blocks(&self) -> Vec<(Unverified, String)> {
+		vec![
+			(Unverified {
+				header: Default::default(),
+				transactions: vec![],
+				uncles: vec![],
+				bytes: vec![1, 2, 3],
+			}, "Invalid block".into())
+		]
+	}
+}
+
 impl BlockChainClient for TestBlockChainClient {
 	fn replay(&self, _id: TransactionId, _analytics: CallAnalytics) -> Result<Executed, CallError> {
 		self.execution_result.read().clone().unwrap()
 	}
 
-	fn replay_block_transactions(&self, _block: BlockId, _analytics: CallAnalytics) -> Result<Box<Iterator<Item = Executed>>, CallError> {
-		Ok(Box::new(self.execution_result.read().clone().unwrap().into_iter()))
+	fn replay_block_transactions(&self, _block: BlockId, _analytics: CallAnalytics) -> Result<Box<Iterator<Item = (H256, Executed)>>, CallError> {
+		Ok(Box::new(self.traces.read().clone().unwrap().into_iter().map(|t| t.transaction_hash.unwrap_or(H256::new())).zip(self.execution_result.read().clone().unwrap().into_iter())))
 	}
 
 	fn block_total_difficulty(&self, _id: BlockId) -> Option<U256> {
@@ -665,13 +686,22 @@ impl BlockChainClient for TestBlockChainClient {
 		self.receipts.read().get(&id).cloned()
 	}
 
-	fn logs(&self, filter: Filter) -> Vec<LocalizedLogEntry> {
+	fn localized_block_receipts(&self, _id: BlockId) -> Option<Vec<LocalizedReceipt>> {
+		Some(self.receipts.read().values().cloned().collect())
+	}
+
+	fn logs(&self, filter: Filter) -> Result<Vec<LocalizedLogEntry>, BlockId> {
+		match self.error_on_logs.read().as_ref() {
+			Some(id) => return Err(id.clone()),
+			None => (),
+		}
+
 		let mut logs = self.logs.read().clone();
 		let len = logs.len();
-		match filter.limit {
+		Ok(match filter.limit {
 			Some(limit) if limit <= len => logs.split_off(len - limit),
 			_ => logs,
-		}
+		})
 	}
 
 	fn last_hashes(&self) -> LastHashes {
@@ -703,7 +733,6 @@ impl BlockChainClient for TestBlockChainClient {
 			.map(|block| block.view().header())
 			.map(|header| self.spec.engine.extra_info(&header))
 	}
-
 
 	fn block_status(&self, id: BlockId) -> BlockStatus {
 		match id {
@@ -760,16 +789,14 @@ impl BlockChainClient for TestBlockChainClient {
 		None
 	}
 
-	fn block_receipts(&self, hash: &H256) -> Option<Bytes> {
+	fn block_receipts(&self, hash: &H256) -> Option<BlockReceipts> {
 		// starts with 'f' ?
 		if *hash > H256::from("f000000000000000000000000000000000000000000000000000000000000000") {
 			let receipt = BlockReceipts::new(vec![Receipt::new(
 				TransactionOutcome::StateRoot(H256::zero()),
 				U256::zero(),
 				vec![])]);
-			let mut rlp = RlpStream::new();
-			rlp.append(&receipt);
-			return Some(rlp.out());
+			return Some(receipt);
 		}
 		None
 	}
@@ -808,8 +835,8 @@ impl BlockChainClient for TestBlockChainClient {
 		self.traces.read().clone()
 	}
 
-	fn ready_transactions(&self) -> Vec<Arc<VerifiedTransaction>> {
-		self.miner.ready_transactions(self)
+	fn transactions_to_propagate(&self) -> Vec<Arc<VerifiedTransaction>> {
+		self.miner.ready_transactions(self, 4096, miner::PendingOrdering::Priority)
 	}
 
 	fn signing_chain_id(&self) -> Option<u64> { None }
@@ -848,8 +875,6 @@ impl BlockChainClient for TestBlockChainClient {
 	}
 
 	fn registrar_address(&self) -> Option<Address> { None }
-
-	fn eip86_transition(&self) -> u64 { u64::max_value() }
 }
 
 impl IoClient for TestBlockChainClient {
@@ -859,8 +884,8 @@ impl IoClient for TestBlockChainClient {
 		self.miner.import_external_transactions(self, txs);
 	}
 
-	fn queue_ancient_block(&self, b: Bytes, _r: Bytes) -> Result<H256, BlockImportError> {
-		self.import_block(b)
+	fn queue_ancient_block(&self, unverified: Unverified, _r: Bytes) -> EthcoreResult<H256> {
+		self.import_block(unverified)
 	}
 
 	fn queue_consensus_message(&self, message: Bytes) {

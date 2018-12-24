@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -22,20 +22,20 @@ use state::{Env, AccountState, Transaction, Log};
 
 /// State test deserialization.
 #[derive(Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct State {
 	/// Environment.
 	pub env: Env,
 	/// Output.
-	#[serde(rename="out")]
+	#[serde(rename = "out")]
 	pub output: Bytes,
 	/// Pre state.
-	#[serde(rename="pre")]
+	#[serde(rename = "pre")]
 	pub pre_state: AccountState,
 	/// Post state.
-	#[serde(rename="post")]
+	#[serde(rename = "post")]
 	pub post_state: AccountState,
 	/// Post state root.
-	#[serde(rename="postStateRoot")]
 	pub post_state_root: H256,
 	/// Transaction.
 	pub transaction: Transaction,

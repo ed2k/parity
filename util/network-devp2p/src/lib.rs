@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -29,7 +29,7 @@
 //! struct MyHandler;
 //!
 //! impl NetworkProtocolHandler for MyHandler {
-//!		fn initialize(&self, io: &NetworkContext, _host_info: &HostInfo) {
+//!		fn initialize(&self, io: &NetworkContext) {
 //!			io.register_timer(0, Duration::from_secs(1));
 //!		}
 //!
@@ -61,8 +61,8 @@
 #![allow(deprecated)]
 
 extern crate ethcore_io as io;
-extern crate ethcore_bytes;
-extern crate ethcore_crypto as crypto;
+extern crate parity_bytes;
+extern crate parity_crypto as crypto;
 extern crate ethereum_types;
 extern crate parking_lot;
 extern crate mio;
@@ -77,14 +77,14 @@ extern crate slab;
 extern crate ethkey;
 extern crate rlp;
 extern crate bytes;
-extern crate path;
+extern crate parity_path;
 extern crate ethcore_logger;
 extern crate ethcore_network as network;
 extern crate ipnetwork;
 extern crate keccak_hash as hash;
 extern crate serde;
 extern crate serde_json;
-extern crate snappy;
+extern crate parity_snappy as snappy;
 
 #[macro_use]
 extern crate error_chain;

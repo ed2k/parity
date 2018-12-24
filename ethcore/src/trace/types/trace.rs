@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -71,7 +71,7 @@ pub struct Call {
 impl From<ActionParams> for Call {
 	fn from(p: ActionParams) -> Self {
 		match p.call_type {
-			CallType::DelegateCall => Call {
+			CallType::DelegateCall | CallType::CallCode => Call {
 				from: p.address,
 				to: p.code_address,
 				value: p.value.value(),
@@ -209,7 +209,6 @@ impl Decodable for Reward {
 		Ok(res)
 	}
 }
-
 
 /// Suicide action.
 #[derive(Debug, Clone, PartialEq, RlpEncodable, RlpDecodable)]

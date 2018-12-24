@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -21,11 +21,12 @@ use bytes::Bytes;
 
 /// Executed transaction.
 #[derive(Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Transaction {
 	/// Contract address.
 	pub address: Address,
 	/// Transaction sender.
-	#[serde(rename="caller")]
+	#[serde(rename = "caller")]
 	pub sender: Address,
 	/// Contract code.
 	pub code: Bytes,
@@ -34,7 +35,6 @@ pub struct Transaction {
 	/// Gas.
 	pub gas: Uint,
 	/// Gas price.
-	#[serde(rename="gasPrice")]
 	pub gas_price: Uint,
 	/// Transaction origin.
 	pub origin: Address,

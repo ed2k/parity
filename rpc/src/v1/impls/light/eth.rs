@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -16,6 +16,7 @@
 
 //! Eth RPC interface for the light client.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use jsonrpc_core::{Result, BoxFuture};
@@ -28,7 +29,7 @@ use light::client::LightChainClient;
 use light::{cht, TransactionQueue};
 use light::on_demand::{request, OnDemand};
 
-use ethcore::account_provider::{AccountProvider, DappId};
+use ethcore::account_provider::AccountProvider;
 use ethcore::encoded;
 use ethcore::filter::Filter as EthcoreFilter;
 use ethcore::ids::BlockId;
@@ -41,17 +42,18 @@ use transaction::SignedTransaction;
 
 use v1::impls::eth_filter::Filterable;
 use v1::helpers::{errors, limit_logs};
-use v1::helpers::{PollFilter, PollManager};
+use v1::helpers::{SyncPollFilter, PollManager};
 use v1::helpers::light_fetch::{self, LightFetch};
 use v1::traits::Eth;
 use v1::types::{
-	RichBlock, Block, BlockTransactions, BlockNumber, Bytes, SyncStatus, SyncInfo,
-	Transaction, CallRequest, Index, Filter, Log, Receipt, Work,
+	RichBlock, Block, BlockTransactions, BlockNumber, LightBlockNumber, Bytes, SyncStatus, SyncInfo,
+	Transaction, CallRequest, Index, Filter, Log, Receipt, Work, EthAccount,
 	H64 as RpcH64, H256 as RpcH256, H160 as RpcH160, U256 as RpcU256,
+	U64 as RpcU64,
 };
 use v1::metadata::Metadata;
 
-const NO_INVALID_BACK_REFS: &'static str = "Fails only on invalid back-references; back-references here known to be valid; qed";
+const NO_INVALID_BACK_REFS: &str = "Fails only on invalid back-references; back-references here known to be valid; qed";
 
 /// Light client `ETH` (and filter) RPC.
 pub struct EthClient<T> {
@@ -61,25 +63,9 @@ pub struct EthClient<T> {
 	transaction_queue: Arc<RwLock<TransactionQueue>>,
 	accounts: Arc<AccountProvider>,
 	cache: Arc<Mutex<LightDataCache>>,
-	polls: Mutex<PollManager<PollFilter>>,
+	polls: Mutex<PollManager<SyncPollFilter>>,
+	poll_lifetime: u32,
 	gas_price_percentile: usize,
-}
-
-impl<T> EthClient<T> {
-	fn num_to_id(num: BlockNumber) -> BlockId {
-		// Note: Here we treat `Pending` as `Latest`.
-		//       Since light clients don't produce pending blocks
-		//       (they don't have state) we can safely fallback to `Latest`.
-		match num {
-			BlockNumber::Num(n) => BlockId::Number(n),
-			BlockNumber::Earliest => BlockId::Earliest,
-			BlockNumber::Latest => BlockId::Latest,
-			BlockNumber::Pending => {
-				warn!("`Pending` is deprecated and may be removed in future versions. Falling back to `Latest`");
-				BlockId::Latest
-			}
-		}
-	}
 }
 
 impl<T> Clone for EthClient<T> {
@@ -92,7 +78,8 @@ impl<T> Clone for EthClient<T> {
 			transaction_queue: self.transaction_queue.clone(),
 			accounts: self.accounts.clone(),
 			cache: self.cache.clone(),
-			polls: Mutex::new(PollManager::new()),
+			polls: Mutex::new(PollManager::new(self.poll_lifetime)),
+			poll_lifetime: self.poll_lifetime,
 			gas_price_percentile: self.gas_price_percentile,
 		}
 	}
@@ -109,6 +96,7 @@ impl<T: LightChainClient + 'static> EthClient<T> {
 		accounts: Arc<AccountProvider>,
 		cache: Arc<Mutex<LightDataCache>>,
 		gas_price_percentile: usize,
+		poll_lifetime: u32
 	) -> Self {
 		EthClient {
 			sync,
@@ -117,7 +105,8 @@ impl<T: LightChainClient + 'static> EthClient<T> {
 			transaction_queue,
 			accounts,
 			cache,
-			polls: Mutex::new(PollManager::new()),
+			polls: Mutex::new(PollManager::new(poll_lifetime)),
+			poll_lifetime,
 			gas_price_percentile,
 		}
 	}
@@ -137,7 +126,6 @@ impl<T: LightChainClient + 'static> EthClient<T> {
 	fn rich_block(&self, id: BlockId, include_txs: bool) -> BoxFuture<RichBlock> {
 		let (on_demand, sync) = (self.on_demand.clone(), self.sync.clone());
 		let (client, engine) = (self.client.clone(), self.client.engine().clone());
-		let eip86_transition = self.client.eip86_transition();
 
 		// helper for filling out a rich block once we've got a block and a score.
 		let fill_rich = move |block: encoded::Block, score: Option<U256>| {
@@ -164,7 +152,7 @@ impl<T: LightChainClient + 'static> EthClient<T> {
 					seal_fields: header.seal().into_iter().cloned().map(Into::into).collect(),
 					uncles: block.uncle_hashes().into_iter().map(Into::into).collect(),
 					transactions: match include_txs {
-						true => BlockTransactions::Full(block.view().localized_transactions().into_iter().map(|t| Transaction::from_localized(t, eip86_transition)).collect()),
+						true => BlockTransactions::Full(block.view().localized_transactions().into_iter().map(Transaction::from_localized).collect()),
 						_ => BlockTransactions::Hashes(block.transaction_hashes().into_iter().map(Into::into).collect()),
 					},
 					extra_data: Bytes::new(header.extra_data().clone()),
@@ -212,7 +200,7 @@ impl<T: LightChainClient + 'static> EthClient<T> {
 								};
 
 								fill_rich(block, score)
-							}).map_err(errors::on_demand_cancel)),
+							}).map_err(errors::on_demand_error)),
 						None => Either::A(future::err(errors::network_disabled())),
 					}
 				}
@@ -233,7 +221,7 @@ impl<T: LightChainClient + 'static> Eth for EthClient<T> {
 			let chain_info = self.client.chain_info();
 			let current_block = U256::from(chain_info.best_block_number);
 			let highest_block = self.sync.highest_block().map(U256::from)
-				.unwrap_or_else(|| current_block.clone());
+				.unwrap_or_else(|| current_block);
 
 			Ok(SyncStatus::Info(SyncInfo {
 				starting_block: U256::from(self.sync.start_block()).into(),
@@ -247,12 +235,20 @@ impl<T: LightChainClient + 'static> Eth for EthClient<T> {
 		}
 	}
 
-	fn author(&self, _meta: Self::Metadata) -> Result<RpcH160> {
-		Ok(Default::default())
+	fn author(&self) -> Result<RpcH160> {
+		self.accounts.accounts()
+			.ok()
+			.and_then(|a| a.first().cloned())
+			.map(From::from)
+			.ok_or_else(|| errors::account("No accounts were found", ""))
 	}
 
 	fn is_mining(&self) -> Result<bool> {
 		Ok(false)
+	}
+
+	fn chain_id(&self) -> Result<Option<RpcU64>> {
+		Ok(self.client.signing_chain_id().map(RpcU64::from))
 	}
 
 	fn hashrate(&self) -> Result<RpcU256> {
@@ -266,12 +262,8 @@ impl<T: LightChainClient + 'static> Eth for EthClient<T> {
 			.unwrap_or_else(Default::default))
 	}
 
-	fn accounts(&self, meta: Metadata) -> Result<Vec<RpcH160>> {
-		let dapp: DappId = meta.dapp_id().into();
-
-		self.accounts
-			.note_dapp_used(dapp.clone())
-			.and_then(|_| self.accounts.dapp_addresses(dapp))
+	fn accounts(&self) -> Result<Vec<RpcH160>> {
+		self.accounts.accounts()
 			.map_err(|e| errors::account("Could not fetch accounts.", e))
 			.map(|accs| accs.into_iter().map(Into::<RpcH160>::into).collect())
 	}
@@ -281,7 +273,7 @@ impl<T: LightChainClient + 'static> Eth for EthClient<T> {
 	}
 
 	fn balance(&self, address: RpcH160, num: Trailing<BlockNumber>) -> BoxFuture<RpcU256> {
-		Box::new(self.fetcher().account(address.into(), Self::num_to_id(num.unwrap_or_default()))
+		Box::new(self.fetcher().account(address.into(), num.unwrap_or_default().to_block_id())
 			.map(|acc| acc.map_or(0.into(), |a| a.balance).into()))
 	}
 
@@ -294,11 +286,11 @@ impl<T: LightChainClient + 'static> Eth for EthClient<T> {
 	}
 
 	fn block_by_number(&self, num: BlockNumber, include_txs: bool) -> BoxFuture<Option<RichBlock>> {
-		Box::new(self.rich_block(Self::num_to_id(num), include_txs).map(Some))
+		Box::new(self.rich_block(num.to_block_id(), include_txs).map(Some))
 	}
 
 	fn transaction_count(&self, address: RpcH160, num: Trailing<BlockNumber>) -> BoxFuture<RpcU256> {
-		Box::new(self.fetcher().account(address.into(), Self::num_to_id(num.unwrap_or_default()))
+		Box::new(self.fetcher().account(address.into(), num.unwrap_or_default().to_block_id())
 			.map(|acc| acc.map_or(0.into(), |a| a.nonce).into()))
 	}
 
@@ -312,7 +304,7 @@ impl<T: LightChainClient + 'static> Eth for EthClient<T> {
 				sync.with_context(|ctx| on_demand.request(ctx, request::Body(hdr.into())))
 					.map(|x| x.expect(NO_INVALID_BACK_REFS))
 					.map(|x| x.map(|b| Some(U256::from(b.transactions_count()).into())))
-					.map(|x| Either::B(x.map_err(errors::on_demand_cancel)))
+					.map(|x| Either::B(x.map_err(errors::on_demand_error)))
 					.unwrap_or_else(|| Either::A(future::err(errors::network_disabled())))
 			}
 		}))
@@ -321,14 +313,14 @@ impl<T: LightChainClient + 'static> Eth for EthClient<T> {
 	fn block_transaction_count_by_number(&self, num: BlockNumber) -> BoxFuture<Option<RpcU256>> {
 		let (sync, on_demand) = (self.sync.clone(), self.on_demand.clone());
 
-		Box::new(self.fetcher().header(Self::num_to_id(num)).and_then(move |hdr| {
+		Box::new(self.fetcher().header(num.to_block_id()).and_then(move |hdr| {
 			if hdr.transactions_root() == KECCAK_NULL_RLP {
 				Either::A(future::ok(Some(U256::from(0).into())))
 			} else {
 				sync.with_context(|ctx| on_demand.request(ctx, request::Body(hdr.into())))
 					.map(|x| x.expect(NO_INVALID_BACK_REFS))
 					.map(|x| x.map(|b| Some(U256::from(b.transactions_count()).into())))
-					.map(|x| Either::B(x.map_err(errors::on_demand_cancel)))
+					.map(|x| Either::B(x.map_err(errors::on_demand_error)))
 					.unwrap_or_else(|| Either::A(future::err(errors::network_disabled())))
 			}
 		}))
@@ -344,7 +336,7 @@ impl<T: LightChainClient + 'static> Eth for EthClient<T> {
 				sync.with_context(|ctx| on_demand.request(ctx, request::Body(hdr.into())))
 					.map(|x| x.expect(NO_INVALID_BACK_REFS))
 					.map(|x| x.map(|b| Some(U256::from(b.uncles_count()).into())))
-					.map(|x| Either::B(x.map_err(errors::on_demand_cancel)))
+					.map(|x| Either::B(x.map_err(errors::on_demand_error)))
 					.unwrap_or_else(|| Either::A(future::err(errors::network_disabled())))
 			}
 		}))
@@ -353,21 +345,21 @@ impl<T: LightChainClient + 'static> Eth for EthClient<T> {
 	fn block_uncles_count_by_number(&self, num: BlockNumber) -> BoxFuture<Option<RpcU256>> {
 		let (sync, on_demand) = (self.sync.clone(), self.on_demand.clone());
 
-		Box::new(self.fetcher().header(Self::num_to_id(num)).and_then(move |hdr| {
+		Box::new(self.fetcher().header(num.to_block_id()).and_then(move |hdr| {
 			if hdr.uncles_hash() == KECCAK_EMPTY_LIST_RLP {
 				Either::B(future::ok(Some(U256::from(0).into())))
 			} else {
 				sync.with_context(|ctx| on_demand.request(ctx, request::Body(hdr.into())))
 					.map(|x| x.expect(NO_INVALID_BACK_REFS))
 					.map(|x| x.map(|b| Some(U256::from(b.uncles_count()).into())))
-					.map(|x| Either::A(x.map_err(errors::on_demand_cancel)))
+					.map(|x| Either::A(x.map_err(errors::on_demand_error)))
 					.unwrap_or_else(|| Either::B(future::err(errors::network_disabled())))
 			}
 		}))
 	}
 
 	fn code_at(&self, address: RpcH160, num: Trailing<BlockNumber>) -> BoxFuture<Bytes> {
-		Box::new(self.fetcher().code(address.into(), Self::num_to_id(num.unwrap_or_default())).map(Into::into))
+		Box::new(self.fetcher().code(address.into(), num.unwrap_or_default().to_block_id()).map(Into::into))
 	}
 
 	fn send_raw_transaction(&self, raw: Bytes) -> Result<RpcH256> {
@@ -393,8 +385,8 @@ impl<T: LightChainClient + 'static> Eth for EthClient<T> {
 		self.send_raw_transaction(raw)
 	}
 
-	fn call(&self, _meta: Self::Metadata, req: CallRequest, num: Trailing<BlockNumber>) -> BoxFuture<Bytes> {
-		Box::new(self.fetcher().proved_execution(req, num).and_then(|res| {
+	fn call(&self, req: CallRequest, num: Trailing<BlockNumber>) -> BoxFuture<Bytes> {
+		Box::new(self.fetcher().proved_read_only_execution(req, num).and_then(|res| {
 			match res {
 				Ok(exec) => Ok(exec.output.into()),
 				Err(e) => Err(errors::execution(e)),
@@ -402,9 +394,9 @@ impl<T: LightChainClient + 'static> Eth for EthClient<T> {
 		}))
 	}
 
-	fn estimate_gas(&self, _meta: Self::Metadata, req: CallRequest, num: Trailing<BlockNumber>) -> BoxFuture<RpcU256> {
+	fn estimate_gas(&self, req: CallRequest, num: Trailing<BlockNumber>) -> BoxFuture<RpcU256> {
 		// TODO: binary chop for more accurate estimates.
-		Box::new(self.fetcher().proved_execution(req, num).and_then(|res| {
+		Box::new(self.fetcher().proved_read_only_execution(req, num).and_then(|res| {
 			match res {
 				Ok(exec) => Ok((exec.refunded + exec.gas_used).into()),
 				Err(e) => Err(errors::execution(e)),
@@ -414,40 +406,34 @@ impl<T: LightChainClient + 'static> Eth for EthClient<T> {
 
 	fn transaction_by_hash(&self, hash: RpcH256) -> BoxFuture<Option<Transaction>> {
 		let hash = hash.into();
-		let eip86 = self.client.eip86_transition();
 
 		{
 			let tx_queue = self.transaction_queue.read();
 			if let Some(tx) = tx_queue.get(&hash) {
 				return Box::new(future::ok(Some(Transaction::from_pending(
 					tx.clone(),
-					self.client.chain_info().best_block_number,
-					eip86,
 				))));
 			}
 		}
 
-		Box::new(self.fetcher().transaction_by_hash(hash, eip86).map(|x| x.map(|(tx, _)| tx)))
+		Box::new(self.fetcher().transaction_by_hash(hash).map(|x| x.map(|(tx, _)| tx)))
 	}
 
 	fn transaction_by_block_hash_and_index(&self, hash: RpcH256, idx: Index) -> BoxFuture<Option<Transaction>> {
-		let eip86 = self.client.eip86_transition();
 		Box::new(self.fetcher().block(BlockId::Hash(hash.into())).map(move |block| {
-			light_fetch::extract_transaction_at_index(block, idx.value(), eip86)
+			light_fetch::extract_transaction_at_index(block, idx.value())
 		}))
 	}
 
 	fn transaction_by_block_number_and_index(&self, num: BlockNumber, idx: Index) -> BoxFuture<Option<Transaction>> {
-		let eip86 = self.client.eip86_transition();
-		Box::new(self.fetcher().block(Self::num_to_id(num)).map(move |block| {
-			light_fetch::extract_transaction_at_index(block, idx.value(), eip86)
+		Box::new(self.fetcher().block(num.to_block_id()).map(move |block| {
+			light_fetch::extract_transaction_at_index(block, idx.value())
 		}))
 	}
 
 	fn transaction_receipt(&self, hash: RpcH256) -> BoxFuture<Option<Receipt>> {
-		let eip86 = self.client.eip86_transition();
 		let fetcher = self.fetcher();
-		Box::new(fetcher.transaction_by_hash(hash.clone().into(), eip86).and_then(move |tx| {
+		Box::new(fetcher.transaction_by_hash(hash.clone().into()).and_then(move |tx| {
 			// the block hash included in the transaction object here has
 			// already been checked for canonicality and whether it contains
 			// the transaction.
@@ -484,9 +470,13 @@ impl<T: LightChainClient + 'static> Eth for EthClient<T> {
 
 	fn uncle_by_block_number_and_index(&self, num: BlockNumber, idx: Index) -> BoxFuture<Option<RichBlock>> {
 		let client = self.client.clone();
-		Box::new(self.fetcher().block(Self::num_to_id(num)).map(move |block| {
+		Box::new(self.fetcher().block(num.to_block_id()).map(move |block| {
 			extract_uncle_at_index(block, idx, client)
 		}))
+	}
+
+	fn proof(&self, _address: RpcH160, _values:Vec<RpcH256>, _num: Trailing<BlockNumber>) -> BoxFuture<EthAccount> {
+		Box::new(future::err(errors::unimplemented(None)))
 	}
 
 	fn compilers(&self) -> Result<Vec<String>> {
@@ -508,8 +498,11 @@ impl<T: LightChainClient + 'static> Eth for EthClient<T> {
 	fn logs(&self, filter: Filter) -> BoxFuture<Vec<Log>> {
 		let limit = filter.limit;
 
-		Box::new(Filterable::logs(self, filter.into())
-			.map(move|logs| limit_logs(logs, limit)))
+		Box::new(
+			Filterable::logs(self, match filter.try_into() {
+				Ok(value) => value,
+				Err(err) => return Box::new(future::err(err)),
+			}).map(move |logs| limit_logs(logs, limit)))
 	}
 
 	fn work(&self, _timeout: Trailing<u64>) -> Result<Work> {
@@ -529,12 +522,12 @@ impl<T: LightChainClient + 'static> Eth for EthClient<T> {
 impl<T: LightChainClient + 'static> Filterable for EthClient<T> {
 	fn best_block_number(&self) -> u64 { self.client.chain_info().best_block_number }
 
-	fn block_hash(&self, id: BlockId) -> Option<RpcH256> {
-		self.client.block_hash(id).map(Into::into)
+	fn block_hash(&self, id: BlockId) -> Option<::ethereum_types::H256> {
+		self.client.block_hash(id)
 	}
 
-	fn pending_transactions_hashes(&self) -> Vec<::ethereum_types::H256> {
-		Vec::new()
+	fn pending_transaction_hashes(&self) -> BTreeSet<::ethereum_types::H256> {
+		BTreeSet::new()
 	}
 
 	fn logs(&self, filter: EthcoreFilter) -> BoxFuture<Vec<Log>> {
@@ -545,8 +538,12 @@ impl<T: LightChainClient + 'static> Filterable for EthClient<T> {
 		Vec::new() // light clients don't mine.
 	}
 
-	fn polls(&self) -> &Mutex<PollManager<PollFilter>> {
+	fn polls(&self) -> &Mutex<PollManager<SyncPollFilter>> {
 		&self.polls
+	}
+
+	fn removed_logs(&self, _block_hash: ::ethereum_types::H256, _filter: &EthcoreFilter) -> (Vec<Log>, u64) {
+		(Default::default(), 0)
 	}
 }
 

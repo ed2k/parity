@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -23,7 +23,7 @@ use serde_json::Error;
 use transaction::TransactionTest;
 
 /// TransactionTest test deserializer.
-#[derive(Debug, PartialEq, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct Test(BTreeMap<String, TransactionTest>);
 
 impl IntoIterator for Test {

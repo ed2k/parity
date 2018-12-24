@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -26,8 +26,8 @@ use types::state_diff::StateDiff;
 use ethjson;
 
 /// State of all accounts in the system expressed in Plain Old Data.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct PodState (BTreeMap<Address, PodAccount>);
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+pub struct PodState(BTreeMap<Address, PodAccount>);
 
 impl PodState {
 	/// Contruct a new object from the `m`.

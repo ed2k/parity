@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -14,7 +14,6 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity.  If not, see <http://www.gnu.org/licenses/>.
 
-
 //! RPC types
 
 mod account_info;
@@ -24,7 +23,6 @@ mod bytes;
 mod call_request;
 mod confirmations;
 mod consensus_status;
-mod dapps;
 mod derivation;
 mod filter;
 mod hash;
@@ -45,20 +43,21 @@ mod transaction_condition;
 mod uint;
 mod work;
 mod private_receipt;
+mod eip191;
 
 pub mod pubsub;
 
-pub use self::account_info::{AccountInfo, ExtAccountInfo, HwAccountInfo};
+pub use self::eip191::{EIP191Version, PresignedTransaction};
+pub use self::account_info::{AccountInfo, ExtAccountInfo, HwAccountInfo, EthAccount, StorageProof, RecoveredAccount};
 pub use self::bytes::Bytes;
 pub use self::block::{RichBlock, Block, BlockTransactions, Header, RichHeader, Rich};
-pub use self::block_number::{BlockNumber, block_number_to_id};
+pub use self::block_number::{BlockNumber, LightBlockNumber, block_number_to_id};
 pub use self::call_request::CallRequest;
 pub use self::confirmations::{
 	ConfirmationPayload, ConfirmationRequest, ConfirmationResponse, ConfirmationResponseWithToken,
-	TransactionModification, SignRequest, DecryptRequest, Either
+	TransactionModification, EIP191SignRequest, EthSignRequest, DecryptRequest, Either
 };
 pub use self::consensus_status::*;
-pub use self::dapps::LocalDapp;
 pub use self::derivation::{DeriveHash, DeriveHierarchical, Derive};
 pub use self::filter::{Filter, FilterChanges};
 pub use self::hash::{H64, H160, H256, H512, H520, H2048};
@@ -66,7 +65,7 @@ pub use self::histogram::Histogram;
 pub use self::index::Index;
 pub use self::log::Log;
 pub use self::node_kind::{NodeKind, Availability, Capability};
-pub use self::provenance::{Origin, DappId};
+pub use self::provenance::Origin;
 pub use self::receipt::Receipt;
 pub use self::rpc_settings::RpcSettings;
 pub use self::secretstore::EncryptedDocumentKey;
@@ -74,7 +73,7 @@ pub use self::sync::{
 	SyncStatus, SyncInfo, Peers, PeerInfo, PeerNetworkInfo, PeerProtocolsInfo,
 	TransactionStats, ChainStatus, EthProtocolInfo, PipProtocolInfo,
 };
-pub use self::trace::{LocalizedTrace, TraceResults};
+pub use self::trace::{LocalizedTrace, TraceResults, TraceResultsWithTransactionHash};
 pub use self::trace_filter::TraceFilter;
 pub use self::transaction::{Transaction, RichRawTransaction, LocalTransactionStatus};
 pub use self::transaction_request::TransactionRequest;

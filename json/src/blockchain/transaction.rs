@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -21,11 +21,10 @@ use bytes::Bytes;
 
 /// Blockchain test transaction deserialization.
 #[derive(Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Transaction {
 	data: Bytes,
-	#[serde(rename="gasLimit")]
 	gas_limit: Uint,
-	#[serde(rename="gasPrice")]
 	gas_price: Uint,
 	nonce: Uint,
 	r: Uint,

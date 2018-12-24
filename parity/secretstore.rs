@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -24,6 +24,7 @@ use ethcore::miner::Miner;
 use ethkey::{Secret, Public};
 use sync::SyncProvider;
 use ethereum_types::Address;
+use parity_runtime::Executor;
 
 /// This node secret key.
 #[derive(Debug, PartialEq, Clone)]
@@ -50,10 +51,10 @@ pub struct Configuration {
 	pub enabled: bool,
 	/// Is HTTP API enabled?
 	pub http_enabled: bool,
-	/// Is ACL check enabled.
-	pub acl_check_enabled: bool,
 	/// Is auto migrate enabled.
 	pub auto_migrate_enabled: bool,
+	/// ACL check contract address.
+	pub acl_check_contract_address: Option<ContractAddress>,
 	/// Service contract address.
 	pub service_contract_address: Option<ContractAddress>,
 	/// Server key generation service contract address.
@@ -68,6 +69,8 @@ pub struct Configuration {
 	pub self_secret: Option<NodeSecretKey>,
 	/// Other nodes IDs + addresses.
 	pub nodes: BTreeMap<Public, (String, u16)>,
+	/// Key Server Set contract address. If None, 'nodes' map is used.
+	pub key_server_set_contract_address: Option<ContractAddress>,
 	/// Interface to listen to
 	pub interface: String,
 	/// Port to listen to
@@ -93,32 +96,32 @@ pub struct Dependencies<'a> {
 	/// Account provider.
 	pub account_provider: Arc<AccountProvider>,
 	/// Passed accounts passwords.
-	pub accounts_passwords: &'a [String],
+	pub accounts_passwords: &'a [Password],
 }
 
 #[cfg(not(feature = "secretstore"))]
 mod server {
-	use super::{Configuration, Dependencies};
+	use super::{Configuration, Dependencies, Executor};
 
 	/// Noop key server implementation
 	pub struct KeyServer;
 
 	impl KeyServer {
 		/// Create new noop key server
-		pub fn new(_conf: Configuration, _deps: Dependencies) -> Result<Self, String> {
+		pub fn new(_conf: Configuration, _deps: Dependencies, _executor: Executor) -> Result<Self, String> {
 			Ok(KeyServer)
 		}
 	}
 }
 
-#[cfg(feature="secretstore")]
+#[cfg(feature = "secretstore")]
 mod server {
 	use std::sync::Arc;
 	use ethcore_secretstore;
 	use ethkey::KeyPair;
-	use ansi_term::Colour::Red;
+	use ansi_term::Colour::{Red, White};
 	use db;
-	use super::{Configuration, Dependencies, NodeSecretKey, ContractAddress};
+	use super::{Configuration, Dependencies, NodeSecretKey, ContractAddress, Executor};
 
 	fn into_service_contract_address(address: ContractAddress) -> ethcore_secretstore::ContractAddress {
 		match address {
@@ -134,17 +137,13 @@ mod server {
 
 	impl KeyServer {
 		/// Create new key server
-		pub fn new(mut conf: Configuration, deps: Dependencies) -> Result<Self, String> {
-			if !conf.acl_check_enabled {
-				warn!("Running SecretStore with disabled ACL check: {}", Red.bold().paint("everyone has access to stored keys"));
-			}
-
+		pub fn new(mut conf: Configuration, deps: Dependencies, executor: Executor) -> Result<Self, String> {
 			let self_secret: Arc<ethcore_secretstore::NodeKeyPair> = match conf.self_secret.take() {
 				Some(NodeSecretKey::Plain(secret)) => Arc::new(ethcore_secretstore::PlainNodeKeyPair::new(
 					KeyPair::from_secret(secret).map_err(|e| format!("invalid secret: {}", e))?)),
 				Some(NodeSecretKey::KeyStore(account)) => {
 					// Check if account exists
-					if !deps.account_provider.has_account(account.clone()).unwrap_or(false) {
+					if !deps.account_provider.has_account(account.clone()) {
 						return Err(format!("Account {} passed as secret store node key is not found", account));
 					}
 
@@ -163,6 +162,11 @@ mod server {
 				None => return Err("self secret is required when using secretstore".into()),
 			};
 
+			info!("Starting SecretStore node: {}", White.bold().paint(format!("{:?}", self_secret.public())));
+			if conf.acl_check_contract_address.is_none() {
+				warn!("Running SecretStore with disabled ACL check: {}", Red.bold().paint("everyone has access to stored keys"));
+			}
+
 			let key_server_name = format!("{}:{}", conf.interface, conf.port);
 			let mut cconf = ethcore_secretstore::ServiceConfiguration {
 				listener_address: if conf.http_enabled { Some(ethcore_secretstore::NodeAddress {
@@ -174,9 +178,8 @@ mod server {
 				service_contract_srv_retr_address: conf.service_contract_srv_retr_address.map(into_service_contract_address),
 				service_contract_doc_store_address: conf.service_contract_doc_store_address.map(into_service_contract_address),
 				service_contract_doc_sretr_address: conf.service_contract_doc_sretr_address.map(into_service_contract_address),
-				acl_check_enabled: conf.acl_check_enabled,
+				acl_check_contract_address: conf.acl_check_contract_address.map(into_service_contract_address),
 				cluster_config: ethcore_secretstore::ClusterConfiguration {
-					threads: 4,
 					listener_address: ethcore_secretstore::NodeAddress {
 						address: conf.interface.clone(),
 						port: conf.port,
@@ -185,6 +188,7 @@ mod server {
 						address: ip,
 						port: port,
 					})).collect(),
+					key_server_set_contract_address: conf.key_server_set_contract_address.map(into_service_contract_address),
 					allow_connecting_to_higher_nodes: true,
 					admin_public: conf.admin_public,
 					auto_migrate_enabled: conf.auto_migrate_enabled,
@@ -194,7 +198,7 @@ mod server {
 			cconf.cluster_config.nodes.insert(self_secret.public().clone(), cconf.cluster_config.listener_address.clone());
 
 			let db = db::open_secretstore_db(&conf.data_path)?;
-			let key_server = ethcore_secretstore::start(deps.client, deps.sync, deps.miner, self_secret, cconf, db)
+			let key_server = ethcore_secretstore::start(deps.client, deps.sync, deps.miner, self_secret, cconf, db, executor)
 				.map_err(|e| format!("Error starting KeyServer {}: {}", key_server_name, e))?;
 
 			Ok(KeyServer {
@@ -205,6 +209,7 @@ mod server {
 }
 
 pub use self::server::KeyServer;
+use ethkey::Password;
 
 impl Default for Configuration {
 	fn default() -> Self {
@@ -212,8 +217,8 @@ impl Default for Configuration {
 		Configuration {
 			enabled: true,
 			http_enabled: true,
-			acl_check_enabled: true,
 			auto_migrate_enabled: true,
+			acl_check_contract_address: Some(ContractAddress::Registry),
 			service_contract_address: None,
 			service_contract_srv_gen_address: None,
 			service_contract_srv_retr_address: None,
@@ -222,6 +227,7 @@ impl Default for Configuration {
 			self_secret: None,
 			admin_public: None,
 			nodes: BTreeMap::new(),
+			key_server_set_contract_address: Some(ContractAddress::Registry),
 			interface: "127.0.0.1".to_owned(),
 			port: 8083,
 			http_interface: "127.0.0.1".to_owned(),
@@ -232,11 +238,11 @@ impl Default for Configuration {
 }
 
 /// Start secret store-related functionality
-pub fn start(conf: Configuration, deps: Dependencies) -> Result<Option<KeyServer>, String> {
+pub fn start(conf: Configuration, deps: Dependencies, executor: Executor) -> Result<Option<KeyServer>, String> {
 	if !conf.enabled {
 		return Ok(None);
 	}
 
-	KeyServer::new(conf, deps)
+	KeyServer::new(conf, deps, executor)
 		.map(|s| Some(s))
 }

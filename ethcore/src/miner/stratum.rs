@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -22,12 +22,13 @@ use std::fmt;
 
 use client::{Client, ImportSealedBlock};
 use ethereum_types::{H64, H256, clean_0x, U256};
-use ethereum::ethash::Ethash;
-use ethash::SeedHashCompute;
+use ethash::{self, SeedHashCompute};
+#[cfg(feature = "work-notify")]
 use ethcore_miner::work_notify::NotifyWork;
+#[cfg(feature = "work-notify")]
+use ethcore_stratum::PushWorkHandler;
 use ethcore_stratum::{
-	JobDispatcher, PushWorkHandler,
-	Stratum as StratumService, Error as StratumServiceError,
+	JobDispatcher, Stratum as StratumService, Error as StratumServiceError,
 };
 use miner::{Miner, MinerService};
 use parking_lot::Mutex;
@@ -111,7 +112,6 @@ pub struct StratumJobDispatcher {
 	miner: Weak<Miner>,
 }
 
-
 impl JobDispatcher for StratumJobDispatcher {
 	fn initial(&self) -> Option<String> {
 		// initial payload may contain additional data, not in this case
@@ -138,7 +138,7 @@ impl JobDispatcher for StratumJobDispatcher {
 		);
 
 		self.with_core_result(|client, miner| {
-			let seal = vec![encode(&payload.mix_hash).into_vec(), encode(&payload.nonce).into_vec()];
+			let seal = vec![encode(&payload.mix_hash), encode(&payload.nonce)];
 
 			let import = miner.submit_seal(payload.pow_hash, seal)
 				.and_then(|block| client.import_sealed_block(block));
@@ -157,7 +157,7 @@ impl StratumJobDispatcher {
 	/// New stratum job dispatcher given the miner and client
 	fn new(miner: Weak<Miner>, client: Weak<Client>) -> StratumJobDispatcher {
 		StratumJobDispatcher {
-			seed_compute: Mutex::new(SeedHashCompute::new()),
+			seed_compute: Mutex::new(SeedHashCompute::default()),
 			client: client,
 			miner: miner,
 		}
@@ -166,7 +166,7 @@ impl StratumJobDispatcher {
 	/// Serializes payload for stratum service
 	fn payload(&self, pow_hash: H256, difficulty: U256, number: u64) -> String {
 		// TODO: move this to engine
-		let target = Ethash::difficulty_to_boundary(&difficulty);
+		let target = ethash::difficulty_to_boundary(&difficulty);
 		let seed_hash = &self.seed_compute.lock().hash_block_number(number);
 		let seed_hash = H256::from_slice(&seed_hash[..]);
 		format!(
@@ -210,6 +210,7 @@ impl From<AddrParseError> for Error {
 	fn from(err: AddrParseError) -> Error { Error::Address(err) }
 }
 
+#[cfg(feature = "work-notify")]
 impl NotifyWork for Stratum {
 	fn notify(&self, pow_hash: H256, difficulty: U256, number: u64) {
 		trace!(target: "stratum", "Notify work");
@@ -243,6 +244,7 @@ impl Stratum {
 	}
 
 	/// Start STRATUM job dispatcher and register it in the miner
+	#[cfg(feature = "work-notify")]
 	pub fn register(cfg: &Options, miner: Arc<Miner>, client: Weak<Client>) -> Result<(), Error> {
 		let stratum = Stratum::start(cfg, Arc::downgrade(&miner.clone()), client)?;
 		miner.add_work_listener(Box::new(stratum) as Box<NotifyWork>);

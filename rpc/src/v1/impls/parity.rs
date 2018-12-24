@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -30,45 +30,42 @@ use ethcore::account_provider::AccountProvider;
 use ethcore::client::{BlockChainClient, StateClient, Call};
 use ethcore::ids::BlockId;
 use ethcore::miner::{self, MinerService};
-use ethcore::mode::Mode;
+use ethcore::snapshot::{SnapshotService, RestorationStatus};
 use ethcore::state::StateInfo;
 use ethcore_logger::RotatingLogger;
-use node_health::{NodeHealth, Health};
 use updater::{Service as UpdateService};
-
 use jsonrpc_core::{BoxFuture, Result};
-use jsonrpc_core::futures::{future, Future};
+use jsonrpc_core::futures::future;
 use jsonrpc_macros::Trailing;
-use v1::helpers::{self, errors, fake_sign, ipfs, SigningQueue, SignerService, NetworkSettings};
-use v1::helpers::accounts::unwrap_provider;
+
+use v1::helpers::block_import::is_major_importing;
+use v1::helpers::{self, errors, fake_sign, ipfs, SigningQueue, SignerService, NetworkSettings, verify_signature};
 use v1::metadata::Metadata;
 use v1::traits::Parity;
 use v1::types::{
-	Bytes, U256, U64, H160, H256, H512, CallRequest,
+	Bytes, U256, H64, U64, H160, H256, H512, CallRequest,
 	Peers, Transaction, RpcSettings, Histogram,
 	TransactionStats, LocalTransactionStatus,
 	BlockNumber, ConsensusCapability, VersionInfo,
-	OperationsInfo, DappId, ChainStatus,
-	AccountInfo, HwAccountInfo, RichHeader,
+	OperationsInfo, ChainStatus, Log, Filter,
+	AccountInfo, HwAccountInfo, RichHeader, Receipt, RecoveredAccount,
 	block_number_to_id
 };
 use Host;
 
 /// Parity implementation.
-pub struct ParityClient<C, M, U>  {
+pub struct ParityClient<C, M, U> {
 	client: Arc<C>,
 	miner: Arc<M>,
 	updater: Arc<U>,
 	sync: Arc<SyncProvider>,
 	net: Arc<ManageNetwork>,
-	health: NodeHealth,
-	accounts: Option<Arc<AccountProvider>>,
+	accounts: Arc<AccountProvider>,
 	logger: Arc<RotatingLogger>,
 	settings: Arc<NetworkSettings>,
 	signer: Option<Arc<SignerService>>,
-	dapps_address: Option<Host>,
 	ws_address: Option<Host>,
-	eip86_transition: u64,
+	snapshot: Option<Arc<SnapshotService>>,
 }
 
 impl<C, M, U> ParityClient<C, M, U> where
@@ -81,36 +78,26 @@ impl<C, M, U> ParityClient<C, M, U> where
 		sync: Arc<SyncProvider>,
 		updater: Arc<U>,
 		net: Arc<ManageNetwork>,
-		health: NodeHealth,
-		accounts: Option<Arc<AccountProvider>>,
+		accounts: Arc<AccountProvider>,
 		logger: Arc<RotatingLogger>,
 		settings: Arc<NetworkSettings>,
 		signer: Option<Arc<SignerService>>,
-		dapps_address: Option<Host>,
 		ws_address: Option<Host>,
+		snapshot: Option<Arc<SnapshotService>>,
 	) -> Self {
-		let eip86_transition = client.eip86_transition();
 		ParityClient {
 			client,
 			miner,
 			sync,
 			updater,
 			net,
-			health,
 			accounts,
 			logger,
 			settings,
 			signer,
-			dapps_address,
 			ws_address,
-			eip86_transition,
+			snapshot,
 		}
-	}
-
-	/// Attempt to get the `Arc<AccountProvider>`, errors if provider was not
-	/// set.
-	fn account_provider(&self) -> Result<Arc<AccountProvider>> {
-		unwrap_provider(&self.accounts)
 	}
 }
 
@@ -122,18 +109,13 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 {
 	type Metadata = Metadata;
 
-	fn accounts_info(&self, dapp: Trailing<DappId>) -> Result<BTreeMap<H160, AccountInfo>> {
-		let dapp = dapp.unwrap_or_default();
-
-		let store = self.account_provider()?;
-		let dapp_accounts = store
-			.note_dapp_used(dapp.clone().into())
-			.and_then(|_| store.dapp_addresses(dapp.into()))
+	fn accounts_info(&self) -> Result<BTreeMap<H160, AccountInfo>> {
+		let dapp_accounts = self.accounts.accounts()
 			.map_err(|e| errors::account("Could not fetch accounts.", e))?
 			.into_iter().collect::<HashSet<_>>();
 
-		let info = store.accounts_info().map_err(|e| errors::account("Could not fetch account info.", e))?;
-		let other = store.addresses_info();
+		let info = self.accounts.accounts_info().map_err(|e| errors::account("Could not fetch account info.", e))?;
+		let other = self.accounts.addresses_info();
 
 		Ok(info
 			.into_iter()
@@ -145,8 +127,7 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 	}
 
 	fn hardware_accounts_info(&self) -> Result<BTreeMap<H160, HwAccountInfo>> {
-		let store = self.account_provider()?;
-		let info = store.hardware_accounts_info().map_err(|e| errors::account("Could not fetch account info.", e))?;
+		let info = self.accounts.hardware_accounts_info().map_err(|e| errors::account("Could not fetch account info.", e))?;
 		Ok(info
 			.into_iter()
 			.map(|(a, v)| (H160::from(a), HwAccountInfo { name: v.name, manufacturer: v.meta }))
@@ -155,15 +136,11 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 	}
 
 	fn locked_hardware_accounts_info(&self) -> Result<Vec<String>> {
-		let store = self.account_provider()?;
-		Ok(store.locked_hardware_accounts().map_err(|e| errors::account("Error communicating with hardware wallet.", e))?)
+		self.accounts.locked_hardware_accounts().map_err(|e| errors::account("Error communicating with hardware wallet.", e))
 	}
 
-	fn default_account(&self, meta: Self::Metadata) -> Result<H160> {
-		let dapp_id = meta.dapp_id();
-
-		Ok(self.account_provider()?
-			.dapp_default_address(dapp_id.into())
+	fn default_account(&self) -> Result<H160> {
+		Ok(self.accounts.default_account()
 			.map(Into::into)
 			.ok()
 			.unwrap_or_default())
@@ -202,23 +179,20 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 		Ok(self.settings.chain.clone())
 	}
 
-	fn chain_id(&self) -> Result<Option<U64>> {
-		Ok(self.client.signing_chain_id().map(U64::from))
-	}
-
 	fn chain(&self) -> Result<String> {
 		Ok(self.client.spec_name())
 	}
 
 	fn net_peers(&self) -> Result<Peers> {
 		let sync_status = self.sync.status();
-		let net_config = self.net.network_config();
+		let num_peers_range = self.net.num_peers_range();
+		debug_assert!(num_peers_range.end > num_peers_range.start);
 		let peers = self.sync.peers().into_iter().map(Into::into).collect();
 
 		Ok(Peers {
 			active: sync_status.num_active_peers,
 			connected: sync_status.num_peers,
-			max: sync_status.current_max_peers(net_config.min_peers, net_config.max_peers),
+			max: sync_status.current_max_peers(num_peers_range.start, num_peers_range.end - 1),
 			peers: peers
 		})
 	}
@@ -313,25 +287,37 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 			.map(Into::into)
 	}
 
-	fn pending_transactions(&self) -> Result<Vec<Transaction>> {
-		let block_number = self.client.chain_info().best_block_number;
-		let ready_transactions = self.miner.ready_transactions(&*self.client);
+	fn pending_transactions(&self, limit: Trailing<usize>) -> Result<Vec<Transaction>> {
+		let ready_transactions = self.miner.ready_transactions(
+			&*self.client,
+			limit.unwrap_or_else(usize::max_value),
+			miner::PendingOrdering::Priority,
+		);
 
 		Ok(ready_transactions
-		   .into_iter()
-		   .map(|t| Transaction::from_pending(t.pending().clone(), block_number, self.eip86_transition))
-		   .collect()
-	  )
+			.into_iter()
+			.map(|t| Transaction::from_pending(t.pending().clone()))
+			.collect()
+		)
 	}
 
 	fn all_transactions(&self) -> Result<Vec<Transaction>> {
-		let block_number = self.client.chain_info().best_block_number;
 		let all_transactions = self.miner.queued_transactions();
 
 		Ok(all_transactions
-		   .into_iter()
-		   .map(|t| Transaction::from_pending(t.pending().clone(), block_number, self.eip86_transition))
-		   .collect()
+			.into_iter()
+			.map(|t| Transaction::from_pending(t.pending().clone()))
+			.collect()
+		)
+	}
+
+	fn all_transaction_hashes(&self) -> Result<Vec<H256>> {
+		let all_transaction_hashes = self.miner.queued_transaction_hashes();
+
+		Ok(all_transaction_hashes
+			.into_iter()
+			.map(|hash| hash.into())
+			.collect()
 		)
 	}
 
@@ -342,34 +328,23 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 	fn pending_transactions_stats(&self) -> Result<BTreeMap<H256, TransactionStats>> {
 		let stats = self.sync.transactions_stats();
 		Ok(stats.into_iter()
-		   .map(|(hash, stats)| (hash.into(), stats.into()))
-		   .collect()
+			.map(|(hash, stats)| (hash.into(), stats.into()))
+			.collect()
 		)
 	}
 
 	fn local_transactions(&self) -> Result<BTreeMap<H256, LocalTransactionStatus>> {
-		// Return nothing if accounts are disabled (running as public node)
-		if self.accounts.is_none() {
-			return Ok(BTreeMap::new());
-		}
-
 		let transactions = self.miner.local_transactions();
-		let block_number = self.client.chain_info().best_block_number;
 		Ok(transactions
-		   .into_iter()
-		   .map(|(hash, status)| (hash.into(), LocalTransactionStatus::from(status, block_number, self.eip86_transition)))
-		   .collect()
+			.into_iter()
+			.map(|(hash, status)| (hash.into(), LocalTransactionStatus::from(status)))
+			.collect()
 		)
-	}
-
-	fn dapps_url(&self) -> Result<String> {
-		helpers::to_url(&self.dapps_address)
-			.ok_or_else(|| errors::dapps_disabled())
 	}
 
 	fn ws_url(&self) -> Result<String> {
 		helpers::to_url(&self.ws_address)
-			.ok_or_else(|| errors::ws_disabled())
+			.ok_or_else(errors::ws_disabled)
 	}
 
 	fn next_nonce(&self, address: H160) -> BoxFuture<U256> {
@@ -379,12 +354,7 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 	}
 
 	fn mode(&self) -> Result<String> {
-		Ok(match self.client.mode() {
-			Mode::Off => "offline",
-			Mode::Dark(..) => "dark",
-			Mode::Passive(..) => "passive",
-			Mode::Active => "active",
-		}.into())
+		Ok(self.client.mode().to_string())
 	}
 
 	fn enode(&self) -> Result<String> {
@@ -417,13 +387,8 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 	fn node_kind(&self) -> Result<::v1::types::NodeKind> {
 		use ::v1::types::{NodeKind, Availability, Capability};
 
-		let availability = match self.accounts {
-			Some(_) => Availability::Personal,
-			None => Availability::Public
-		};
-
 		Ok(NodeKind {
-			availability: availability,
+			availability: Availability::Personal,
 			capability: Capability::Full,
 		})
 	}
@@ -434,7 +399,8 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 
 		let (header, extra) = if number == BlockNumber::Pending {
 			let info = self.client.chain_info();
-			let header = try_bf!(self.miner.pending_block_header(info.best_block_number).ok_or(errors::unknown_block()));
+			let header =
+				try_bf!(self.miner.pending_block_header(info.best_block_number).ok_or_else(errors::unknown_block));
 
 			(header.encoded(), None)
 		} else {
@@ -445,7 +411,7 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 				BlockNumber::Pending => unreachable!(), // Already covered
 			};
 
-			let header = try_bf!(self.client.block_header(id.clone()).ok_or(errors::unknown_block()));
+			let header = try_bf!(self.client.block_header(id.clone()).ok_or_else(errors::unknown_block));
 			let info = self.client.block_extra_info(id).expect(EXTRA_INFO_PROOF);
 
 			(header, Some(info))
@@ -457,15 +423,36 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 		}))
 	}
 
+	fn block_receipts(&self, number: Trailing<BlockNumber>) -> BoxFuture<Vec<Receipt>> {
+		let number = number.unwrap_or_default();
+
+		let id = match number {
+			BlockNumber::Pending => {
+				let info = self.client.chain_info();
+				let receipts = try_bf!(self.miner.pending_receipts(info.best_block_number).ok_or_else(errors::unknown_block));
+				return Box::new(future::ok(receipts
+					.into_iter()
+					.map(Into::into)
+					.collect()
+				))
+			},
+			BlockNumber::Num(num) => BlockId::Number(num),
+			BlockNumber::Earliest => BlockId::Earliest,
+			BlockNumber::Latest => BlockId::Latest,
+		};
+		let receipts = try_bf!(self.client.localized_block_receipts(id).ok_or_else(errors::unknown_block));
+		Box::new(future::ok(receipts.into_iter().map(Into::into).collect()))
+	}
+
 	fn ipfs_cid(&self, content: Bytes) -> Result<String> {
 		ipfs::cid(content)
 	}
 
-	fn call(&self, meta: Self::Metadata, requests: Vec<CallRequest>, num: Trailing<BlockNumber>) -> Result<Vec<Bytes>> {
+	fn call(&self, requests: Vec<CallRequest>, num: Trailing<BlockNumber>) -> Result<Vec<Bytes>> {
 		let requests = requests
 			.into_iter()
 			.map(|request| Ok((
-				fake_sign::sign_call(request.into(), meta.is_dapp())?,
+				fake_sign::sign_call(request.into())?,
 				Default::default()
 			)))
 			.collect::<Result<Vec<_>>>()?;
@@ -474,8 +461,8 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 
 		let (mut state, header) = if num == BlockNumber::Pending {
 			let info = self.client.chain_info();
-			let state = self.miner.pending_state(info.best_block_number).ok_or(errors::state_pruned())?;
-			let header = self.miner.pending_block_header(info.best_block_number).ok_or(errors::state_pruned())?;
+			let state = self.miner.pending_state(info.best_block_number).ok_or_else(errors::state_pruned)?;
+			let header = self.miner.pending_block_header(info.best_block_number).ok_or_else(errors::state_pruned)?;
 
 			(state, header)
 		} else {
@@ -486,8 +473,8 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 				BlockNumber::Pending => unreachable!(), // Already covered
 			};
 
-			let state = self.client.state_at(id).ok_or(errors::state_pruned())?;
-			let header = self.client.block_header(id).ok_or(errors::state_pruned())?.decode().map_err(errors::decode)?;
+			let state = self.client.state_at(id).ok_or_else(errors::state_pruned)?;
+			let header = self.client.block_header(id).ok_or_else(errors::state_pruned)?.decode().map_err(errors::decode)?;
 
 			(state, header)
 		};
@@ -497,8 +484,34 @@ impl<C, M, U, S> Parity for ParityClient<C, M, U> where
 				.map_err(errors::call)
 	}
 
-	fn node_health(&self) -> BoxFuture<Health> {
-		Box::new(self.health.health()
-			.map_err(|err| errors::internal("Health API failure.", err)))
+	fn submit_work_detail(&self, nonce: H64, pow_hash: H256, mix_hash: H256) -> Result<H256> {
+		helpers::submit_work_detail(&self.client, &self.miner, nonce, pow_hash, mix_hash)
+	}
+
+	fn status(&self) -> Result<()> {
+		let has_peers = self.settings.is_dev_chain || self.sync.status().num_peers > 0;
+		let is_warping = match self.snapshot.as_ref().map(|s| s.status()) {
+			Some(RestorationStatus::Ongoing { .. }) => true,
+			_ => false,
+		};
+		let is_not_syncing =
+			!is_warping &&
+			!is_major_importing(Some(self.sync.status().state), self.client.queue_info());
+
+		if has_peers && is_not_syncing {
+			Ok(())
+		} else {
+			Err(errors::status_error(has_peers))
+		}
+	}
+
+	fn logs_no_tx_hash(&self, filter: Filter) -> BoxFuture<Vec<Log>> {
+		use v1::impls::eth::base_logs;
+		// only specific impl for lightclient
+		base_logs(&*self.client, &*self.miner, filter.into())
+	}
+
+	fn verify_signature(&self, is_prefixed: bool, message: Bytes, r: H256, s: H256, v: U64) -> Result<RecoveredAccount> {
+		verify_signature(is_prefixed, message, r, s, v, self.client.signing_chain_id())
 	}
 }

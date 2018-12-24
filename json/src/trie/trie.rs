@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -23,7 +23,7 @@ use trie::Input;
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct Trie {
 	/// Trie test input.
-	#[serde(rename="in")]
+	#[serde(rename = "in")]
 	pub input: Input,
 	/// Trie root hash.
 	pub root: H256,

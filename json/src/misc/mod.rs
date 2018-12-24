@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -48,7 +48,5 @@ macro_rules! impl_serialization {
 }
 
 mod account_meta;
-mod dapps_settings;
 
-pub use self::dapps_settings::{DappsSettings, DappsHistory, NewDappsPolicy};
 pub use self::account_meta::AccountMeta;

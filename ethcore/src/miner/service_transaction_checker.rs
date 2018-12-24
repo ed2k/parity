@@ -1,4 +1,4 @@
-// Copyright 2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -12,22 +12,21 @@
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity. If not, see <http://www.gnu.org/licenses/>.
+// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
 
 //! A service transactions contract checker.
 
 use client::{RegistryInfo, CallContract, BlockId};
 use transaction::SignedTransaction;
+use ethabi::FunctionOutputDecoder;
 
-use_contract!(service_transaction, "ServiceTransaction", "res/contracts/service_transaction.json");
+use_contract!(service_transaction, "res/contracts/service_transaction.json");
 
 const SERVICE_TRANSACTION_CONTRACT_REGISTRY_NAME: &'static str = "service_transaction_checker";
 
 /// Service transactions checker.
 #[derive(Default, Clone)]
-pub struct ServiceTransactionChecker {
-	contract: service_transaction::ServiceTransaction,
-}
+pub struct ServiceTransactionChecker;
 
 impl ServiceTransactionChecker {
 	/// Checks if given address is whitelisted to send service transactions.
@@ -45,9 +44,8 @@ impl ServiceTransactionChecker {
 
 		trace!(target: "txqueue", "[{:?}] Checking service transaction checker contract from {}", hash, sender);
 
-		self.contract.functions()
-			.certified()
-			.call(sender, &|data| client.call_contract(BlockId::Latest, address, data))
-			.map_err(|e| e.to_string())
+		let (data, decoder) = service_transaction::functions::certified::call(sender);
+		let value = client.call_contract(BlockId::Latest, address, data)?;
+		decoder.decode(&value).map_err(|e| e.to_string())
 	}
 }

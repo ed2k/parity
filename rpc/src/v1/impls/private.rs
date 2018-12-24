@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity.  If not, see <http://www.gnu.org/licenses/>.
 
-//! Privte transaction signing RPC implementation.
+//! Private transaction signing RPC implementation.
 
 use std::sync::Arc;
 
@@ -47,7 +47,7 @@ impl PrivateClient {
 	fn unwrap_manager(&self) -> Result<&PrivateTransactionManager, Error> {
 		match self.private {
 			Some(ref arc) => Ok(&**arc),
-			None => Err(errors::public_unsupported(None)),
+			None => Err(errors::light_unimplemented(None)),
 		}
 	}
 }
@@ -100,14 +100,14 @@ impl Private for PrivateClient {
 		})
 	}
 
-	fn private_call(&self, meta: Self::Metadata, block_number: BlockNumber, request: CallRequest) -> Result<Bytes, Error> {
+	fn private_call(&self, block_number: BlockNumber, request: CallRequest) -> Result<Bytes, Error> {
 		let id = match block_number {
 			BlockNumber::Pending => return Err(errors::private_message_block_id_not_supported()),
 			num => block_number_to_id(num)
 		};
 
 		let request = CallRequest::into(request);
-		let signed = fake_sign::sign_call(request, meta.is_dapp())?;
+		let signed = fake_sign::sign_call(request)?;
 		let client = self.unwrap_manager()?;
 		let executed_result = client.private_call(id, &signed).map_err(|e| errors::private_message(e))?;
 		Ok(executed_result.output.into())
@@ -119,4 +119,3 @@ impl Private for PrivateClient {
 		Ok(key.into())
 	}
 }
-

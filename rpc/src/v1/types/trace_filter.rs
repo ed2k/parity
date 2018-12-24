@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -23,18 +23,15 @@ use v1::types::{BlockNumber, H160};
 /// Trace filter
 #[derive(Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct TraceFilter {
 	/// From block
-	#[serde(rename="fromBlock")]
 	pub from_block: Option<BlockNumber>,
 	/// To block
-	#[serde(rename="toBlock")]
 	pub to_block: Option<BlockNumber>,
 	/// From address
-	#[serde(rename="fromAddress")]
 	pub from_address: Option<Vec<H160>>,
 	/// To address
-	#[serde(rename="toAddress")]
 	pub to_address: Option<Vec<H160>>,
 	/// Output offset
 	pub after: Option<usize>,

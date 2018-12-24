@@ -1,6 +1,23 @@
-use {syn, quote};
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
+// This file is part of Parity.
 
-pub fn impl_encodable(ast: &syn::DeriveInput) -> quote::Tokens {
+// Parity is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+// Parity is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+
+// You should have received a copy of the GNU General Public License
+// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+
+use syn;
+use proc_macro2::{TokenStream, Span};
+
+pub fn impl_encodable(ast: &syn::DeriveInput) -> TokenStream {
 	let body = match ast.data {
 		syn::Data::Struct(ref s) => s,
 		_ => panic!("#[derive(RlpEncodable)] is only defined for structs."),
@@ -11,7 +28,7 @@ pub fn impl_encodable(ast: &syn::DeriveInput) -> quote::Tokens {
 
 	let stmts_len = stmts.len();
 	let stmts_len = quote! { #stmts_len };
-	let dummy_const: syn::Ident = format!("_IMPL_RLP_ENCODABLE_FOR_{}", name).into();
+	let dummy_const = syn::Ident::new(&format!("_IMPL_RLP_ENCODABLE_FOR_{}", name), Span::call_site());
 	let impl_block = quote! {
 		impl rlp::Encodable for #name {
 			fn rlp_append(&self, stream: &mut rlp::RlpStream) {
@@ -30,7 +47,7 @@ pub fn impl_encodable(ast: &syn::DeriveInput) -> quote::Tokens {
 	}
 }
 
-pub fn impl_encodable_wrapper(ast: &syn::DeriveInput) -> quote::Tokens {
+pub fn impl_encodable_wrapper(ast: &syn::DeriveInput) -> TokenStream {
 	let body = match ast.data {
 		syn::Data::Struct(ref s) => s,
 		_ => panic!("#[derive(RlpEncodableWrapper)] is only defined for structs."),
@@ -48,7 +65,7 @@ pub fn impl_encodable_wrapper(ast: &syn::DeriveInput) -> quote::Tokens {
 
 	let name = &ast.ident;
 
-	let dummy_const: syn::Ident = format!("_IMPL_RLP_ENCODABLE_FOR_{}", name).into();
+	let dummy_const = syn::Ident::new(&format!("_IMPL_RLP_ENCODABLE_FOR_{}", name), Span::call_site());
 	let impl_block = quote! {
 		impl rlp::Encodable for #name {
 			fn rlp_append(&self, stream: &mut rlp::RlpStream) {
@@ -66,11 +83,11 @@ pub fn impl_encodable_wrapper(ast: &syn::DeriveInput) -> quote::Tokens {
 	}
 }
 
-fn encodable_field_map(tuple: (usize, &syn::Field)) -> quote::Tokens {
+fn encodable_field_map(tuple: (usize, &syn::Field)) -> TokenStream {
 	encodable_field(tuple.0, tuple.1)
 }
 
-fn encodable_field(index: usize, field: &syn::Field) -> quote::Tokens {
+fn encodable_field(index: usize, field: &syn::Field) -> TokenStream {
 	let ident = match field.ident {
 		Some(ref ident) => quote! { #ident },
 		None => {
@@ -104,4 +121,3 @@ fn encodable_field(index: usize, field: &syn::Field) -> quote::Tokens {
 		_ => panic!("rlp_derive not supported"),
 	}
 }
-

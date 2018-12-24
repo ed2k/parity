@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -14,15 +14,17 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity.  If not, see <http://www.gnu.org/licenses/>.
 
+use futures::future::{self, Loop};
 use std::sync::Arc;
 use std::thread::{JoinHandle, self};
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
-use crossbeam::sync::chase_lev;
+use deque;
 use service_mio::{HandlerId, IoChannel, IoContext};
+use tokio::{self};
 use IoHandler;
 use LOCAL_STACK_SIZE;
 
-use std::sync::{Condvar as SCondvar, Mutex as SMutex};
+use parking_lot::{Condvar, Mutex};
 
 const STACK_SIZE: usize = 16*1024*1024;
 
@@ -45,18 +47,18 @@ pub struct Work<Message> {
 /// Sorts them ready for blockchain insertion.
 pub struct Worker {
 	thread: Option<JoinHandle<()>>,
-	wait: Arc<SCondvar>,
+	wait: Arc<Condvar>,
 	deleting: Arc<AtomicBool>,
-	wait_mutex: Arc<SMutex<()>>,
+	wait_mutex: Arc<Mutex<()>>,
 }
 
 impl Worker {
 	/// Creates a new worker instance.
 	pub fn new<Message>(index: usize,
-						stealer: chase_lev::Stealer<Work<Message>>,
+						stealer: deque::Stealer<Work<Message>>,
 						channel: IoChannel<Message>,
-						wait: Arc<SCondvar>,
-						wait_mutex: Arc<SMutex<()>>,
+						wait: Arc<Condvar>,
+						wait_mutex: Arc<Mutex<()>>,
 					   ) -> Worker
 					where Message: Send + Sync + 'static {
 		let deleting = Arc::new(AtomicBool::new(false));
@@ -69,33 +71,31 @@ impl Worker {
 		worker.thread = Some(thread::Builder::new().stack_size(STACK_SIZE).name(format!("IO Worker #{}", index)).spawn(
 			move || {
 				LOCAL_STACK_SIZE.with(|val| val.set(STACK_SIZE));
-				Worker::work_loop(stealer, channel.clone(), wait, wait_mutex.clone(), deleting)
+				let ini = (stealer, channel.clone(), wait, wait_mutex.clone(), deleting);
+				let future = future::loop_fn(ini, |(stealer, channel, wait, wait_mutex, deleting)| {
+					{
+						let mut lock = wait_mutex.lock();
+						if deleting.load(AtomicOrdering::Acquire) {
+							return Ok(Loop::Break(()));
+						}
+						wait.wait(&mut lock);
+					}
+
+					while !deleting.load(AtomicOrdering::Acquire) {
+						match stealer.steal() {
+							deque::Steal::Data(work) => Worker::do_work(work, channel.clone()),
+							deque::Steal::Retry => {},
+							deque::Steal::Empty => break,
+						}
+					}
+					Ok(Loop::Continue((stealer, channel, wait, wait_mutex, deleting)))
+				});
+				if let Err(()) = tokio::runtime::current_thread::block_on_all(future) {
+					error!(target: "ioworker", "error while executing future")
+				}
 			})
 			.expect("Error creating worker thread"));
 		worker
-	}
-
-	fn work_loop<Message>(stealer: chase_lev::Stealer<Work<Message>>,
-						channel: IoChannel<Message>, wait: Arc<SCondvar>,
-						wait_mutex: Arc<SMutex<()>>,
-						deleting: Arc<AtomicBool>)
-						where Message: Send + Sync + 'static {
-		loop {
-			{
-				let lock = wait_mutex.lock().expect("Poisoned work_loop mutex");
-				if deleting.load(AtomicOrdering::Acquire) {
-					return;
-				}
-				let _ = wait.wait(lock);
-			}
-
-			while !deleting.load(AtomicOrdering::Acquire) {
-				match stealer.steal() {
-					chase_lev::Steal::Data(work) => Worker::do_work(work, channel.clone()),
-					_ => break,
-				}
-			}
-		}
 	}
 
 	fn do_work<Message>(work: Work<Message>, channel: IoChannel<Message>) where Message: Send + Sync + 'static {
@@ -122,7 +122,7 @@ impl Worker {
 impl Drop for Worker {
 	fn drop(&mut self) {
 		trace!(target: "shutdown", "[IoWorker] Closing...");
-		let _ = self.wait_mutex.lock().expect("Poisoned work_loop mutex");
+		let _ = self.wait_mutex.lock();
 		self.deleting.store(true, AtomicOrdering::Release);
 		self.wait.notify_all();
 		if let Some(thread) = self.thread.take() {

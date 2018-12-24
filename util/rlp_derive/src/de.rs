@@ -1,8 +1,25 @@
-use {syn, quote};
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
+// This file is part of Parity.
+
+// Parity is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+// Parity is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+
+// You should have received a copy of the GNU General Public License
+// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+
+use syn;
+use proc_macro2::{TokenStream, Span};
 
 struct ParseQuotes {
-	single: quote::Tokens,
-	list: quote::Tokens,
+	single: TokenStream,
+	list: TokenStream,
 	takes_index: bool,
 }
 
@@ -22,17 +39,16 @@ fn decodable_wrapper_parse_quotes() -> ParseQuotes {
 	}
 }
 
-pub fn impl_decodable(ast: &syn::DeriveInput) -> quote::Tokens {
+pub fn impl_decodable(ast: &syn::DeriveInput) -> TokenStream {
 	let body = match ast.data {
 		syn::Data::Struct(ref s) => s,
 		_ => panic!("#[derive(RlpDecodable)] is only defined for structs."),
 	};
 
-
 	let stmts: Vec<_> = body.fields.iter().enumerate().map(decodable_field_map).collect();
 	let name = &ast.ident;
 
-	let dummy_const: syn::Ident = format!("_IMPL_RLP_DECODABLE_FOR_{}", name).into();
+	let dummy_const = syn::Ident::new(&format!("_IMPL_RLP_DECODABLE_FOR_{}", name), Span::call_site());
 	let impl_block = quote! {
 		impl rlp::Decodable for #name {
 			fn decode(rlp: &rlp::Rlp) -> Result<Self, rlp::DecoderError> {
@@ -54,7 +70,7 @@ pub fn impl_decodable(ast: &syn::DeriveInput) -> quote::Tokens {
 	}
 }
 
-pub fn impl_decodable_wrapper(ast: &syn::DeriveInput) -> quote::Tokens {
+pub fn impl_decodable_wrapper(ast: &syn::DeriveInput) -> TokenStream {
 	let body = match ast.data {
 		syn::Data::Struct(ref s) => s,
 		_ => panic!("#[derive(RlpDecodableWrapper)] is only defined for structs."),
@@ -72,7 +88,7 @@ pub fn impl_decodable_wrapper(ast: &syn::DeriveInput) -> quote::Tokens {
 
 	let name = &ast.ident;
 
-	let dummy_const: syn::Ident = format!("_IMPL_RLP_DECODABLE_FOR_{}", name).into();
+	let dummy_const = syn::Ident::new(&format!("_IMPL_RLP_DECODABLE_FOR_{}", name), Span::call_site());
 	let impl_block = quote! {
 		impl rlp::Decodable for #name {
 			fn decode(rlp: &rlp::Rlp) -> Result<Self, rlp::DecoderError> {
@@ -94,11 +110,11 @@ pub fn impl_decodable_wrapper(ast: &syn::DeriveInput) -> quote::Tokens {
 	}
 }
 
-fn decodable_field_map(tuple: (usize, &syn::Field)) -> quote::Tokens {
+fn decodable_field_map(tuple: (usize, &syn::Field)) -> TokenStream {
 	decodable_field(tuple.0, tuple.1, decodable_parse_quotes())
 }
 
-fn decodable_field(index: usize, field: &syn::Field, quotes: ParseQuotes) -> quote::Tokens {
+fn decodable_field(index: usize, field: &syn::Field, quotes: ParseQuotes) -> TokenStream {
 	let id = match field.ident {
 		Some(ref ident) => quote! { #ident },
 		None => {
@@ -132,4 +148,3 @@ fn decodable_field(index: usize, field: &syn::Field, quotes: ParseQuotes) -> quo
 		_ => panic!("rlp_derive not supported"),
 	}
 }
-

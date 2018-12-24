@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -19,7 +19,7 @@ use std::net::Shutdown;
 use std::io::{Read, Write, Error};
 use futures::Poll;
 use tokio_io::{AsyncRead, AsyncWrite};
-use tokio_core::net::TcpStream;
+use tokio::net::TcpStream;
 
 /// Read+Write implementation for Arc<TcpStream>.
 pub struct SharedTcpStream {

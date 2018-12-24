@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -27,6 +27,7 @@ pub mod test;
 pub use self::account::Account;
 pub use self::block::Block;
 pub use self::blockchain::BlockChain;
+pub use self::blockchain::Engine;
 pub use self::header::Header;
 pub use self::state::State;
 pub use self::test::Test;

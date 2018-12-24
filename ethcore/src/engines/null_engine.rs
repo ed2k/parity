@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -89,7 +89,7 @@ impl<M: WithBalances + WithRewards> Engine<M> for NullEngine<M>
 		for u in LiveBlock::uncles(&*block) {
 			let uncle_author = u.author();
 			let result_uncle_reward = (reward * U256::from(8 + u.number() - number)).shr(3);
-			rewards.push((*uncle_author, RewardKind::Uncle, result_uncle_reward));
+			rewards.push((*uncle_author, RewardKind::uncle(number, u.number()), result_uncle_reward));
 		}
 
 		block_reward::apply_block_rewards(&rewards, block, &self.machine)

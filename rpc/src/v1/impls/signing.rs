@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -32,7 +32,6 @@ use v1::helpers::{
 	ConfirmationResult as RpcConfirmationResult,
 };
 use v1::helpers::dispatch::{self, Dispatcher};
-use v1::helpers::accounts::unwrap_provider;
 use v1::metadata::Metadata;
 use v1::traits::{EthSigning, ParitySigning};
 use v1::types::{
@@ -45,7 +44,7 @@ use v1::types::{
 	Origin,
 };
 
-use parity_reactor::Remote;
+use parity_runtime::Executor;
 
 /// After 60s entries that are not queried with `check_request` will get garbage collected.
 const MAX_PENDING_DURATION_SEC: u32 = 60;
@@ -68,7 +67,7 @@ impl Future for DispatchResult {
 	}
 }
 
-fn schedule(remote: Remote,
+fn schedule(executor: Executor,
 	confirmations: Arc<Mutex<TransientHashMap<U256, Option<RpcConfirmationResult>>>>,
 	id: U256,
 	future: RpcConfirmationReceiver) {
@@ -84,40 +83,35 @@ fn schedule(remote: Remote,
 		confirmations.insert(id, Some(result));
 		Ok(())
 	});
-	remote.spawn(future);
+	executor.spawn(future);
 }
 
 /// Implementation of functions that require signing when no trusted signer is used.
 pub struct SigningQueueClient<D> {
 	signer: Arc<SignerService>,
-	accounts: Option<Arc<AccountProvider>>,
+	accounts: Arc<AccountProvider>,
 	dispatcher: D,
-	remote: Remote,
+	executor: Executor,
 	// None here means that the request hasn't yet been confirmed
 	confirmations: Arc<Mutex<TransientHashMap<U256, Option<RpcConfirmationResult>>>>,
 }
 
 impl<D: Dispatcher + 'static> SigningQueueClient<D> {
 	/// Creates a new signing queue client given shared signing queue.
-	pub fn new(signer: &Arc<SignerService>, dispatcher: D, remote: Remote, accounts: &Option<Arc<AccountProvider>>) -> Self {
+	pub fn new(signer: &Arc<SignerService>, dispatcher: D, executor: Executor, accounts: &Arc<AccountProvider>) -> Self {
 		SigningQueueClient {
 			signer: signer.clone(),
 			accounts: accounts.clone(),
 			dispatcher,
-			remote,
+			executor,
 			confirmations: Arc::new(Mutex::new(TransientHashMap::new(MAX_PENDING_DURATION_SEC))),
 		}
 	}
 
-	fn account_provider(&self) -> Result<Arc<AccountProvider>> {
-		unwrap_provider(&self.accounts)
-	}
-
 	fn dispatch(&self, payload: RpcConfirmationPayload, default_account: DefaultAccount, origin: Origin) -> BoxFuture<DispatchResult> {
-		let accounts = try_bf!(self.account_provider());
+		let accounts = self.accounts.clone();
 		let default_account = match default_account {
 			DefaultAccount::Provided(acc) => acc,
-			DefaultAccount::ForDapp(dapp) => accounts.dapp_default_address(dapp).ok().unwrap_or_default(),
 		};
 
 		let dispatcher = self.dispatcher.clone();
@@ -143,14 +137,13 @@ impl<D: Dispatcher + 'static> SigningQueueClient<D> {
 impl<D: Dispatcher + 'static> ParitySigning for SigningQueueClient<D> {
 	type Metadata = Metadata;
 
-	fn compose_transaction(&self, meta: Metadata, transaction: RpcTransactionRequest) -> BoxFuture<RpcTransactionRequest> {
-		let accounts = try_bf!(self.account_provider());
-		let default_account = accounts.dapp_default_address(meta.dapp_id().into()).ok().unwrap_or_default();
+	fn compose_transaction(&self, _meta: Metadata, transaction: RpcTransactionRequest) -> BoxFuture<RpcTransactionRequest> {
+		let default_account = self.accounts.default_account().ok().unwrap_or_default();
 		Box::new(self.dispatcher.fill_optional_fields(transaction.into(), default_account, true).map(Into::into))
 	}
 
 	fn post_sign(&self, meta: Metadata, address: RpcH160, data: RpcBytes) -> BoxFuture<RpcEither<RpcU256, RpcConfirmationResponse>> {
-		let remote = self.remote.clone();
+		let executor = self.executor.clone();
 		let confirmations = self.confirmations.clone();
 
 		Box::new(self.dispatch(
@@ -160,21 +153,21 @@ impl<D: Dispatcher + 'static> ParitySigning for SigningQueueClient<D> {
 		).map(move |result| match result {
 			DispatchResult::Value(v) => RpcEither::Or(v),
 			DispatchResult::Future(id, future) => {
-				schedule(remote, confirmations, id, future);
+				schedule(executor, confirmations, id, future);
 				RpcEither::Either(id.into())
 			},
 		}))
 	}
 
 	fn post_transaction(&self, meta: Metadata, request: RpcTransactionRequest) -> BoxFuture<RpcEither<RpcU256, RpcConfirmationResponse>> {
-		let remote = self.remote.clone();
+		let executor = self.executor.clone();
 		let confirmations = self.confirmations.clone();
 
-		Box::new(self.dispatch(RpcConfirmationPayload::SendTransaction(request), meta.dapp_id().into(), meta.origin)
+		Box::new(self.dispatch(RpcConfirmationPayload::SendTransaction(request), DefaultAccount::Provided(self.accounts.default_account().ok().unwrap_or_default()), meta.origin)
 			.map(|result| match result {
 				DispatchResult::Value(v) => RpcEither::Or(v),
 				DispatchResult::Future(id, future) => {
-					schedule(remote, confirmations, id, future);
+					schedule(executor, confirmations, id, future);
 					RpcEither::Either(id.into())
 				},
 			}))
@@ -227,7 +220,7 @@ impl<D: Dispatcher + 'static> EthSigning for SigningQueueClient<D> {
 	fn send_transaction(&self, meta: Metadata, request: RpcTransactionRequest) -> BoxFuture<RpcH256> {
 		let res = self.dispatch(
 			RpcConfirmationPayload::SendTransaction(request),
-			meta.dapp_id().into(),
+			DefaultAccount::Provided(self.accounts.default_account().ok().unwrap_or_default()),
 			meta.origin,
 		);
 
@@ -242,7 +235,7 @@ impl<D: Dispatcher + 'static> EthSigning for SigningQueueClient<D> {
 	fn sign_transaction(&self, meta: Metadata, request: RpcTransactionRequest) -> BoxFuture<RpcRichRawTransaction> {
 		let res = self.dispatch(
 			RpcConfirmationPayload::SignTransaction(request),
-			meta.dapp_id().into(),
+			DefaultAccount::Provided(self.accounts.default_account().ok().unwrap_or_default()),
 			meta.origin,
 		);
 

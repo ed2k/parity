@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -55,9 +55,9 @@ fn private_contract() {
 	let key3 = KeyPair::from_secret(Secret::from("0000000000000000000000000000000000000000000000000000000000000013")).unwrap();
 	let key4 = KeyPair::from_secret(Secret::from("0000000000000000000000000000000000000000000000000000000000000014")).unwrap();
 	let ap = Arc::new(AccountProvider::transient_provider());
-	ap.insert_account(key1.secret().clone(), "").unwrap();
-	ap.insert_account(key3.secret().clone(), "").unwrap();
-	ap.insert_account(key4.secret().clone(), "").unwrap();
+	ap.insert_account(key1.secret().clone(), &"".into()).unwrap();
+	ap.insert_account(key3.secret().clone(), &"".into()).unwrap();
+	ap.insert_account(key4.secret().clone(), &"".into()).unwrap();
 
 	let config = ProviderConfig{
 		validator_accounts: vec![key3.address(), key4.address()],
@@ -90,6 +90,17 @@ fn private_contract() {
 	let public_tx = public_tx.sign(&key1.secret(), chain_id);
 	trace!("Transaction created. Pushing block");
 	push_block_with_transactions(&client, &[public_tx]);
+
+	trace!("Querying default private state");
+	let mut query_tx = Transaction::default();
+	query_tx.action = Action::Call(address.clone());
+	query_tx.data = "0c55699c".from_hex().unwrap();  // getX
+	query_tx.gas = 50000.into();
+	query_tx.nonce = 1.into();
+	let query_tx = query_tx.sign(&key1.secret(), chain_id);
+	let result = pm.private_call(BlockId::Latest, &query_tx).unwrap();
+	assert_eq!(&result.output[..], &("0000000000000000000000000000000000000000000000000000000000000000".from_hex().unwrap()[..]));
+	assert_eq!(pm.get_validators(BlockId::Latest, &address).unwrap(), validators);
 
 	trace!("Modifying private state");
 	let mut private_tx = Transaction::default();

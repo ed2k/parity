@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -12,7 +12,7 @@
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity. If not, see <http://www.gnu.org/licenses/>.
+// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Gas prices histogram.
 
@@ -21,9 +21,9 @@ use v1::types::U256;
 /// Values of RPC settings.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct Histogram {
 	/// Gas prices for bucket edges.
-	#[serde(rename="bucketBounds")]
 	pub bucket_bounds: Vec<U256>,
 	/// Transacion counts for each bucket.
 	pub counts: Vec<usize>,

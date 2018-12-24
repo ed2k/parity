@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -25,26 +25,22 @@ use uint::Uint;
 
 /// Blockchain test header deserializer.
 #[derive(Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DifficultyTestCase {
 	/// Parent timestamp.
-	#[serde(rename="parentTimestamp")]
 	pub parent_timestamp: Uint,
 	/// Parent difficulty.
-	#[serde(rename="parentDifficulty")]
 	pub parent_difficulty: Uint,
 	/// Parent uncle hash.
-	#[serde(rename="parentUncles")]
 	pub parent_uncles: H256,
 	/// Current timestamp.
-	#[serde(rename="currentTimestamp")]
 	pub current_timestamp: Uint,
 	/// Current difficulty.
-	#[serde(rename="currentDifficulty")]
 	pub current_difficulty: Uint,
 	/// Current block number.
-	#[serde(rename="currentBlockNumber")]
 	pub current_block_number: Uint,
 }
+
 /// Blockchain test deserializer.
 #[derive(Debug, PartialEq, Deserialize)]
 pub struct DifficultyTest(BTreeMap<String, DifficultyTestCase>);
@@ -65,3 +61,58 @@ impl DifficultyTest {
 	}
 }
 
+/// Test to skip (only if issue ongoing)
+#[derive(Debug, PartialEq, Deserialize)]
+pub struct SkipStates {
+	/// Block tests
+	pub block: Vec<BlockSkipStates>,
+	/// State tests
+	pub state: Vec<StateSkipStates>,
+
+}
+
+/// Block test to skip.
+#[derive(Debug, PartialEq, Deserialize)]
+pub struct BlockSkipStates {
+	/// Issue reference.
+	pub reference: String,
+	/// Test failing name.
+	pub failing: String,
+	/// Items failing for the test.
+	pub subtests: Vec<String>,
+}
+
+/// State test to skip.
+#[derive(Debug, PartialEq, Deserialize)]
+pub struct StateSkipStates {
+	/// Issue reference.
+	pub reference: String,
+	/// Test failing name.
+	pub failing: String,
+	/// Items failing for the test.
+	pub subtests: BTreeMap<String, StateSkipSubStates>
+}
+
+/// State subtest to skip.
+#[derive(Debug, PartialEq, Deserialize)]
+pub struct StateSkipSubStates {
+	/// State test number of this item. Or '*' for all state.
+	pub subnumbers: Vec<String>,
+	/// Chain for this items.
+	pub chain: String,
+}
+
+impl SkipStates {
+	/// Loads skip states from json.
+	pub fn load<R>(reader: R) -> Result<Self, Error> where R: Read {
+		serde_json::from_reader(reader)
+	}
+
+	/// Empty skip states.
+	pub fn empty() -> Self {
+		SkipStates {
+			block: Vec::new(),
+			state: Vec::new(),
+		}
+	}
+}

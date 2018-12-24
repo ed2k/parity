@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -179,7 +179,7 @@ mod tests {
 
 			parent_hash = Some(header.hash());
 
-			encoded::Header::new(::rlp::encode(&header).into_vec())
+			encoded::Header::new(::rlp::encode(&header))
 		}).collect();
 
 		assert!(verify(&headers, &request).is_ok());
@@ -205,7 +205,7 @@ mod tests {
 
 			parent_hash = Some(header.hash());
 
-			encoded::Header::new(::rlp::encode(&header).into_vec())
+			encoded::Header::new(::rlp::encode(&header))
 		}).collect();
 
 		assert!(verify(&headers, &request).is_ok());
@@ -231,7 +231,7 @@ mod tests {
 
 			parent_hash = Some(header.hash());
 
-			encoded::Header::new(::rlp::encode(&header).into_vec())
+			encoded::Header::new(::rlp::encode(&header))
 		}).collect();
 
 		assert_eq!(verify(&headers, &request), Err(BasicError::TooManyHeaders(20, 25)));
@@ -250,7 +250,7 @@ mod tests {
 			let mut header = Header::default();
 			header.set_number(x);
 
-			encoded::Header::new(::rlp::encode(&header).into_vec())
+			encoded::Header::new(::rlp::encode(&header))
 		}).collect();
 
 		assert_eq!(verify(&headers, &request), Err(BasicError::WrongSkip(5, Some(2))));

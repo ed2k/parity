@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -39,10 +39,10 @@ use ethstore::ethkey::{Generator, Random};
 use parking_lot::Mutex;
 use serde_json;
 use transaction::{Transaction, Action, SignedTransaction};
-
-use parity_reactor::Remote;
+use parity_runtime::{Runtime, Executor};
 
 struct SigningTester {
+	pub runtime: Runtime,
 	pub signer: Arc<SignerService>,
 	pub client: Arc<TestBlockChainClient>,
 	pub miner: Arc<TestMinerService>,
@@ -52,24 +52,25 @@ struct SigningTester {
 
 impl Default for SigningTester {
 	fn default() -> Self {
+		let runtime = Runtime::with_thread_count(1);
 		let signer = Arc::new(SignerService::new_test(false));
 		let client = Arc::new(TestBlockChainClient::default());
 		let miner = Arc::new(TestMinerService::default());
 		let accounts = Arc::new(AccountProvider::transient_provider());
-		let opt_accounts = Some(accounts.clone());
-		let reservations = Arc::new(Mutex::new(nonce::Reservations::new()));
+		let reservations = Arc::new(Mutex::new(nonce::Reservations::new(runtime.executor())));
 		let mut io = IoHandler::default();
 
 		let dispatcher = FullDispatcher::new(client.clone(), miner.clone(), reservations, 50);
 
-		let remote = Remote::new_thread_per_future();
+		let executor = Executor::new_thread_per_future();
 
-		let rpc = SigningQueueClient::new(&signer, dispatcher.clone(), remote.clone(), &opt_accounts);
+		let rpc = SigningQueueClient::new(&signer, dispatcher.clone(), executor.clone(), &accounts);
 		io.extend_with(EthSigning::to_delegate(rpc));
-		let rpc = SigningQueueClient::new(&signer, dispatcher, remote, &opt_accounts);
+		let rpc = SigningQueueClient::new(&signer, dispatcher, executor, &accounts);
 		io.extend_with(ParitySigning::to_delegate(rpc));
 
 		SigningTester {
+			runtime,
 			signer: signer,
 			client: client,
 			miner: miner,
@@ -110,7 +111,8 @@ fn should_add_sign_to_queue() {
 	::std::thread::spawn(move || loop {
 		if signer.requests().len() == 1 {
 			// respond
-			signer.request_confirmed(1.into(), Ok(ConfirmationResponse::Signature(0.into())));
+			let sender = signer.take(&1.into()).unwrap();
+			signer.request_confirmed(sender, Ok(ConfirmationResponse::Signature(0.into())));
 			break
 		}
 		::std::thread::sleep(Duration::from_millis(100))
@@ -188,7 +190,8 @@ fn should_check_status_of_request_when_its_resolved() {
 		"id": 1
 	}"#;
 	tester.io.handle_request_sync(&request).expect("Sent");
-	tester.signer.request_confirmed(1.into(), Ok(ConfirmationResponse::Signature(1.into())));
+	let sender = tester.signer.take(&1.into()).unwrap();
+	tester.signer.request_confirmed(sender, Ok(ConfirmationResponse::Signature(1.into())));
 
 	// This is not ideal, but we need to give futures some time to be executed, and they need to run in a separate thread
 	thread::sleep(Duration::from_millis(20));
@@ -211,7 +214,7 @@ fn should_sign_if_account_is_unlocked() {
 	// given
 	let tester = eth_signing();
 	let data = vec![5u8];
-	let acc = tester.accounts.insert_account(Secret::from([69u8; 32]), "test").unwrap();
+	let acc = tester.accounts.insert_account(Secret::from([69u8; 32]), &"test".into()).unwrap();
 	tester.accounts.unlock_account_permanently(acc, "test".into()).unwrap();
 
 	// when
@@ -259,7 +262,8 @@ fn should_add_transaction_to_queue() {
 	::std::thread::spawn(move || loop {
 		if signer.requests().len() == 1 {
 			// respond
-			signer.request_confirmed(1.into(), Ok(ConfirmationResponse::SendTransaction(0.into())));
+			let sender = signer.take(&1.into()).unwrap();
+			signer.request_confirmed(sender, Ok(ConfirmationResponse::SendTransaction(0.into())));
 			break
 		}
 		::std::thread::sleep(Duration::from_millis(100))
@@ -273,7 +277,7 @@ fn should_add_transaction_to_queue() {
 fn should_add_sign_transaction_to_the_queue() {
 	// given
 	let tester = eth_signing();
-	let address = tester.accounts.new_account("test").unwrap();
+	let address = tester.accounts.new_account(&"test".into()).unwrap();
 
 	assert_eq!(tester.signer.requests().len(), 0);
 
@@ -335,8 +339,9 @@ fn should_add_sign_transaction_to_the_queue() {
 	::std::thread::spawn(move || loop {
 		if signer.requests().len() == 1 {
 			// respond
-			signer.request_confirmed(1.into(), Ok(ConfirmationResponse::SignTransaction(
-				RichRawTransaction::from_signed(t.into(), 0x0, u64::max_value())
+			let sender = signer.take(&1.into()).unwrap();
+			signer.request_confirmed(sender, Ok(ConfirmationResponse::SignTransaction(
+				RichRawTransaction::from_signed(t.into())
 			)));
 			break
 		}
@@ -351,7 +356,7 @@ fn should_add_sign_transaction_to_the_queue() {
 fn should_dispatch_transaction_if_account_is_unlock() {
 	// given
 	let tester = eth_signing();
-	let acc = tester.accounts.new_account("test").unwrap();
+	let acc = tester.accounts.new_account(&"test".into()).unwrap();
 	tester.accounts.unlock_account_permanently(acc, "test".into()).unwrap();
 
 	let t = Transaction {
@@ -390,9 +395,8 @@ fn should_decrypt_message_if_account_is_unlocked() {
 	let mut tester = eth_signing();
 	let parity = parity::Dependencies::new();
 	tester.io.extend_with(parity.client(None).to_delegate());
-	let (address, public) = tester.accounts.new_account_and_public("test").unwrap();
+	let (address, public) = tester.accounts.new_account_and_public(&"test".into()).unwrap();
 	tester.accounts.unlock_account_permanently(address, "test".into()).unwrap();
-
 
 	// First encrypt message
 	let request = format!("{}0x{:x}{}",
@@ -442,7 +446,8 @@ fn should_add_decryption_to_the_queue() {
 	::std::thread::spawn(move || loop {
 		if signer.requests().len() == 1 {
 			// respond
-			signer.request_confirmed(1.into(), Ok(ConfirmationResponse::Decrypt(vec![0x1, 0x2].into())));
+			let sender = signer.take(&1.into()).unwrap();
+			signer.request_confirmed(sender, Ok(ConfirmationResponse::Decrypt(vec![0x1, 0x2].into())));
 			break
 		}
 		::std::thread::sleep(Duration::from_millis(10))
@@ -472,7 +477,6 @@ fn should_compose_transaction() {
 	let response = r#"{"jsonrpc":"2.0","result":{"condition":null,"data":"0x","from":"0x"#.to_owned()
 		+ &from
 		+ r#"","gas":"0x5208","gasPrice":"0x4a817c800","nonce":"0x0","to":null,"value":"0x5"},"id":1}"#;
-
 
 	// then
 	let res = tester.io.handle_request(&request).wait().unwrap();

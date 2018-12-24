@@ -1,4 +1,4 @@
-// Copyright 2018 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -21,14 +21,15 @@ use uint::Uint;
 
 /// Spec hardcoded sync.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct HardcodedSync {
 	/// Hexadecimal of the RLP encoding of the header of the block to start synchronization from.
 	pub header: String,
 	/// Total difficulty including the block of `header`.
-	#[serde(rename="totalDifficulty")]
 	pub total_difficulty: Uint,
 	/// Ordered trie roots of blocks before and including `header`.
-	#[serde(rename="CHTs")]
+	#[serde(rename = "CHTs")]
 	pub chts: Vec<H256>,
 }
 

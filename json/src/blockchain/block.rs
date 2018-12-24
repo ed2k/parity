@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -23,11 +23,11 @@ use blockchain::transaction::Transaction;
 /// Blockchain test block deserializer.
 #[derive(Debug, PartialEq, Deserialize)]
 pub struct Block {
-	#[serde(rename="blockHeader")]
+	#[serde(rename = "blockHeader")]
 	header: Option<Header>,
 	rlp: Bytes,
 	transactions: Option<Vec<Transaction>>,
-	#[serde(rename="uncleHeaders")]
+	#[serde(rename = "uncleHeaders")]
 	uncles: Option<Vec<Header>>,
 }
 

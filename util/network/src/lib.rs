@@ -1,4 +1,4 @@
-// Copyright 2018 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -16,13 +16,17 @@
 
 #![recursion_limit="128"]
 
-extern crate ethcore_crypto as crypto;
+extern crate parity_crypto as crypto;
 extern crate ethcore_io as io;
 extern crate ethereum_types;
 extern crate ethkey;
 extern crate rlp;
 extern crate ipnetwork;
-extern crate snappy;
+extern crate parity_snappy as snappy;
+extern crate libc;
+
+#[cfg(test)] #[macro_use]
+extern crate assert_matches;
 
 #[macro_use]
 extern crate error_chain;
@@ -42,7 +46,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use ipnetwork::{IpNetwork, IpNetworkError};
 use ethkey::Secret;
-use ethereum_types::{H256, H512};
+use ethereum_types::H512;
 use rlp::{Decodable, DecoderError, Rlp};
 
 /// Protocol handler level packet id
@@ -281,6 +285,9 @@ pub trait NetworkContext {
 
 	/// Returns this object's subprotocol name.
 	fn subprotocol_name(&self) -> ProtocolId;
+
+	/// Returns whether the given peer ID is a reserved peer.
+	fn is_reserved_peer(&self, peer: PeerId) -> bool;
 }
 
 impl<'a, T> NetworkContext for &'a T where T: ?Sized + NetworkContext {
@@ -327,11 +334,10 @@ impl<'a, T> NetworkContext for &'a T where T: ?Sized + NetworkContext {
 	fn subprotocol_name(&self) -> ProtocolId {
 		(**self).subprotocol_name()
 	}
-}
 
-pub trait HostInfo {
-	/// Returns public key
-	fn id(&self) -> &NodeId;
+	fn is_reserved_peer(&self, peer: PeerId) -> bool {
+		(**self).is_reserved_peer(peer)
+	}
 }
 
 /// Network IO protocol handler. This needs to be implemented for each new subprotocol.
@@ -339,7 +345,7 @@ pub trait HostInfo {
 /// `Message` is the type for message data.
 pub trait NetworkProtocolHandler: Sync + Send {
 	/// Initialize the handler
-	fn initialize(&self, _io: &NetworkContext, _host_info: &HostInfo) {}
+	fn initialize(&self, _io: &NetworkContext) {}
 	/// Called when new network packet received.
 	fn read(&self, io: &NetworkContext, peer: &PeerId, packet_id: u8, data: &[u8]);
 	/// Called when new peer is connected. Only called when peer supports the same protocol.
@@ -351,7 +357,7 @@ pub trait NetworkProtocolHandler: Sync + Send {
 }
 
 /// Non-reserved peer modes.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum NonReservedPeerMode {
 	/// Accept them. This is the default.
 	Accept,

@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -17,6 +17,7 @@
 //! RPC mocked tests. Most of these test that the RPC server is serializing and forwarding
 //! method calls properly.
 
+mod debug;
 mod eth;
 mod eth_pubsub;
 mod manage_network;

@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -18,9 +18,9 @@
 use jsonrpc_core::{Result, BoxFuture};
 use jsonrpc_macros::Trailing;
 
-use v1::types::{RichBlock, BlockNumber, Bytes, CallRequest, Filter, FilterChanges, Index};
+use v1::types::{RichBlock, BlockNumber, Bytes, CallRequest, Filter, FilterChanges, Index, EthAccount};
 use v1::types::{Log, Receipt, SyncStatus, Transaction, Work};
-use v1::types::{H64, H160, H256, U256};
+use v1::types::{H64, H160, H256, U256, U64};
 
 build_rpc_trait! {
 	/// Eth rpc interface.
@@ -40,20 +40,26 @@ build_rpc_trait! {
 		fn hashrate(&self) -> Result<U256>;
 
 		/// Returns block author.
-		#[rpc(meta, name = "eth_coinbase")]
-		fn author(&self, Self::Metadata) -> Result<H160>;
+		#[rpc(name = "eth_coinbase")]
+		fn author(&self) -> Result<H160>;
 
 		/// Returns true if client is actively mining new blocks.
 		#[rpc(name = "eth_mining")]
 		fn is_mining(&self) -> Result<bool>;
+
+		/// Returns the chain ID used for transaction signing at the
+		/// current best block. None is returned if not
+		/// available.
+		#[rpc(name = "eth_chainId")]
+		fn chain_id(&self) -> Result<Option<U64>>;
 
 		/// Returns current gas_price.
 		#[rpc(name = "eth_gasPrice")]
 		fn gas_price(&self) -> Result<U256>;
 
 		/// Returns accounts list.
-		#[rpc(meta, name = "eth_accounts")]
-		fn accounts(&self, Self::Metadata) -> Result<Vec<H160>>;
+		#[rpc(name = "eth_accounts")]
+		fn accounts(&self) -> Result<Vec<H160>>;
 
 		/// Returns highest block number.
 		#[rpc(name = "eth_blockNumber")]
@@ -62,6 +68,10 @@ build_rpc_trait! {
 		/// Returns balance of the given account.
 		#[rpc(name = "eth_getBalance")]
 		fn balance(&self, H160, Trailing<BlockNumber>) -> BoxFuture<U256>;
+
+		/// Returns the account- and storage-values of the specified account including the Merkle-proof
+		#[rpc(name = "eth_getProof")]
+		fn proof(&self, H160, Vec<H256>, Trailing<BlockNumber>) -> BoxFuture<EthAccount>;
 
 		/// Returns content of the storage at given address.
 		#[rpc(name = "eth_getStorageAt")]
@@ -108,12 +118,12 @@ build_rpc_trait! {
 		fn submit_transaction(&self, Bytes) -> Result<H256>;
 
 		/// Call contract, returning the output data.
-		#[rpc(meta, name = "eth_call")]
-		fn call(&self, Self::Metadata, CallRequest, Trailing<BlockNumber>) -> BoxFuture<Bytes>;
+		#[rpc(name = "eth_call")]
+		fn call(&self, CallRequest, Trailing<BlockNumber>) -> BoxFuture<Bytes>;
 
 		/// Estimate gas needed for execution of given contract.
-		#[rpc(meta, name = "eth_estimateGas")]
-		fn estimate_gas(&self, Self::Metadata, CallRequest, Trailing<BlockNumber>) -> BoxFuture<U256>;
+		#[rpc(name = "eth_estimateGas")]
+		fn estimate_gas(&self, CallRequest, Trailing<BlockNumber>) -> BoxFuture<U256>;
 
 		/// Get transaction by its hash.
 		#[rpc(name = "eth_getTransactionByHash")]

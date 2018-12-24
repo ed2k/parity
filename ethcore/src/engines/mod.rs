@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -21,10 +21,7 @@ mod basic_authority;
 mod instant_seal;
 mod null_engine;
 mod signer;
-mod tendermint;
-mod transition;
 mod validator_set;
-mod vote_collector;
 
 pub mod block_reward;
 pub mod epoch;
@@ -32,9 +29,8 @@ pub mod epoch;
 pub use self::authority_round::AuthorityRound;
 pub use self::basic_authority::BasicAuthority;
 pub use self::epoch::{EpochVerifier, Transition as EpochTransition};
-pub use self::instant_seal::InstantSeal;
+pub use self::instant_seal::{InstantSeal, InstantSealParams};
 pub use self::null_engine::NullEngine;
-pub use self::tendermint::Tendermint;
 
 use std::sync::{Weak, Arc};
 use std::collections::{BTreeMap, HashMap};
@@ -44,14 +40,14 @@ use self::epoch::PendingTransition;
 
 use account_provider::AccountProvider;
 use builtin::Builtin;
-use vm::{EnvInfo, Schedule, CreateContractAddress};
+use vm::{EnvInfo, Schedule, CreateContractAddress, CallType, ActionValue};
 use error::Error;
 use header::{Header, BlockNumber};
 use snapshot::SnapshotComponents;
 use spec::CommonParams;
 use transaction::{self, UnverifiedTransaction, SignedTransaction};
 
-use ethkey::Signature;
+use ethkey::{Password, Signature};
 use parity_machine::{Machine, LocalizedMachine as Localized, TotalScoredHeader};
 use ethereum_types::{H256, U256, Address};
 use unexpected::{Mismatch, OutOfBounds};
@@ -133,6 +129,48 @@ pub enum Seal {
 /// A system-calling closure. Enacts calls on a block's state from the system address.
 pub type SystemCall<'a> = FnMut(Address, Vec<u8>) -> Result<Vec<u8>, String> + 'a;
 
+/// A system-calling closure. Enacts calls on a block's state with code either from an on-chain contract, or hard-coded EVM or WASM (if enabled on-chain) codes.
+pub type SystemOrCodeCall<'a> = FnMut(SystemOrCodeCallKind, Vec<u8>) -> Result<Vec<u8>, String> + 'a;
+
+/// Kind of SystemOrCodeCall, this is either an on-chain address, or code.
+#[derive(PartialEq, Debug, Clone)]
+pub enum SystemOrCodeCallKind {
+	/// On-chain address.
+	Address(Address),
+	/// Hard-coded code.
+	Code(Arc<Vec<u8>>, H256),
+}
+
+/// Default SystemOrCodeCall implementation.
+pub fn default_system_or_code_call<'a>(machine: &'a ::machine::EthereumMachine, block: &'a mut ::block::ExecutedBlock) -> impl FnMut(SystemOrCodeCallKind, Vec<u8>) -> Result<Vec<u8>, String> + 'a {
+	move |to, data| {
+		let result = match to {
+			SystemOrCodeCallKind::Address(address) => {
+				machine.execute_as_system(
+					block,
+					address,
+					U256::max_value(),
+					Some(data),
+				)
+			},
+			SystemOrCodeCallKind::Code(code, code_hash) => {
+				machine.execute_code_as_system(
+					block,
+					None,
+					Some(code),
+					Some(code_hash),
+					Some(ActionValue::Apparent(U256::zero())),
+					U256::max_value(),
+					Some(data),
+					Some(CallType::StaticCall),
+				)
+			},
+		};
+
+		result.map_err(|e| format!("{}", e))
+	}
+}
+
 /// Type alias for a function we can get headers by hash through.
 pub type Headers<'a, H> = Fn(H256) -> Option<H> + 'a;
 
@@ -212,6 +250,9 @@ pub trait Engine<M: Machine>: Sync + Send {
 	/// The number of generations back that uncles can be.
 	fn maximum_uncle_age(&self) -> usize { 6 }
 
+	/// Optional maximum gas limit.
+	fn maximum_gas_limit(&self) -> Option<U256> { None }
+
 	/// Block transformation functions, before the transactions.
 	/// `epoch_begin` set to true if this block kicks off an epoch.
 	fn on_new_block(
@@ -257,9 +298,11 @@ pub trait Engine<M: Machine>: Sync + Send {
 	fn verify_local_seal(&self, header: &M::Header) -> Result<(), M::Error>;
 
 	/// Phase 1 quick block verification. Only does checks that are cheap. Returns either a null `Ok` or a general error detailing the problem with import.
+	/// The verification module can optionally avoid checking the seal (`check_seal`), if seal verification is disabled this method won't be called.
 	fn verify_block_basic(&self, _header: &M::Header) -> Result<(), M::Error> { Ok(()) }
 
 	/// Phase 2 verification. Perform costly checks such as transaction signatures. Returns either a null `Ok` or a general error detailing the problem with import.
+	/// The verification module can optionally avoid checking the seal (`check_seal`), if seal verification is disabled this method won't be called.
 	fn verify_block_unordered(&self, _header: &M::Header) -> Result<(), M::Error> { Ok(()) }
 
 	/// Phase 3 verification. Check block information against parent. Returns either a null `Ok` or a general error detailing the problem with import.
@@ -291,10 +334,30 @@ pub trait Engine<M: Machine>: Sync + Send {
 	///
 	/// This either means that an immediate transition occurs or a block signalling transition
 	/// has reached finality. The `Headers` given are not guaranteed to return any blocks
-	/// from any epoch other than the current.
+	/// from any epoch other than the current. The client must keep track of finality and provide
+	/// the latest finalized headers to check against the transition store.
 	///
 	/// Return optional transition proof.
 	fn is_epoch_end(
+		&self,
+		_chain_head: &M::Header,
+		_finalized: &[H256],
+		_chain: &Headers<M::Header>,
+		_transition_store: &PendingTransitionStore,
+	) -> Option<Vec<u8>> {
+		None
+	}
+
+	/// Whether a block is the end of an epoch.
+	///
+	/// This either means that an immediate transition occurs or a block signalling transition
+	/// has reached finality. The `Headers` given are not guaranteed to return any blocks
+	/// from any epoch other than the current. This is a specialized method to use for light
+	/// clients since the light client doesn't track finality of all blocks, and therefore finality
+	/// for blocks in the current epoch is built inside this method by the engine.
+	///
+	/// Return optional transition proof.
+	fn is_epoch_end_light(
 		&self,
 		_chain_head: &M::Header,
 		_chain: &Headers<M::Header>,
@@ -322,7 +385,7 @@ pub trait Engine<M: Machine>: Sync + Send {
 	fn is_proposal(&self, _verified_header: &M::Header) -> bool { false }
 
 	/// Register an account which signs consensus messages.
-	fn set_signer(&self, _account_provider: Arc<AccountProvider>, _address: Address, _password: String) {}
+	fn set_signer(&self, _account_provider: Arc<AccountProvider>, _address: Address, _password: Password) {}
 
 	/// Sign using the EngineSigner, to be used for consensus tx signing.
 	fn sign(&self, _hash: H256) -> Result<Signature, M::Error> { unimplemented!() }
@@ -362,7 +425,7 @@ pub trait Engine<M: Machine>: Sync + Send {
 
 	/// Gather all ancestry actions. Called at the last stage when a block is committed. The Engine must guarantee that
 	/// the ancestry exists.
-	fn ancestry_actions(&self, _block: &M::LiveBlock, _ancestry: &mut Iterator<Item=M::ExtendedHeader>) -> Vec<AncestryAction> {
+	fn ancestry_actions(&self, _header: &M::Header, _ancestry: &mut Iterator<Item=M::ExtendedHeader>) -> Vec<AncestryAction> {
 		Vec::new()
 	}
 

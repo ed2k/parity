@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -15,9 +15,10 @@
 // along with Parity.  If not, see <http://www.gnu.org/licenses/>.
 
 use api::TransactionStats;
+use std::hash::BuildHasher;
 use std::collections::{HashSet, HashMap};
 use ethereum_types::{H256, H512};
-use plain_hasher::H256FastMap;
+use fastmap::H256FastMap;
 
 type NodeId = H512;
 type BlockNumber = u64;
@@ -74,7 +75,7 @@ impl TransactionsStats {
 	}
 
 	/// Retains only transactions present in given `HashSet`.
-	pub fn retain(&mut self, hashes: &HashSet<H256>) {
+	pub fn retain<S: BuildHasher>(&mut self, hashes: &HashSet<H256, S>) {
 		let to_remove = self.pending_transactions.keys()
 			.filter(|hash| !hashes.contains(hash))
 			.cloned()

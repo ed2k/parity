@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -23,13 +23,13 @@ use maybe::MaybeEmpty;
 
 /// Vm call deserialization.
 #[derive(Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Call {
 	/// Call data.
 	pub data: Bytes,
 	/// Call destination.
 	pub destination: MaybeEmpty<Address>,
 	/// Gas limit.
-	#[serde(rename="gasLimit")]
 	pub gas_limit: Uint,
 	/// Call value.
 	pub value: Uint,

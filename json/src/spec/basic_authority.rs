@@ -1,4 +1,4 @@
-// Copyright 2015-2017 Parity Technologies (UK) Ltd.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
 // This file is part of Parity.
 
 // Parity is free software: you can redistribute it and/or modify
@@ -21,9 +21,10 @@ use super::ValidatorSet;
 
 /// Authority params deserialization.
 #[derive(Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct BasicAuthorityParams {
 	/// Block duration.
-	#[serde(rename="durationLimit")]
 	pub duration_limit: Uint,
 	/// Valid authorities
 	pub validators: ValidatorSet,
@@ -31,6 +32,7 @@ pub struct BasicAuthorityParams {
 
 /// Authority engine deserialization.
 #[derive(Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BasicAuthority {
 	/// Ethash params.
 	pub params: BasicAuthorityParams,

@@ -22,10 +22,12 @@ use network::{self, PeerId};
 use parking_lot::RwLock;
 use rlp::{Rlp, RlpStream};
 use std::cmp;
+
 use sync_io::SyncIo;
 
 use super::{
 	ChainSync,
+	SyncHandler,
 	RlpResponseResult,
 	PacketDecodeError,
 	BLOCK_BODIES_PACKET,
@@ -46,6 +48,8 @@ use super::{
 	RECEIPTS_PACKET,
 	SNAPSHOT_DATA_PACKET,
 	SNAPSHOT_MANIFEST_PACKET,
+	STATUS_PACKET,
+	TRANSACTIONS_PACKET,
 };
 
 /// The Chain Sync Supplier: answers requests from peers with available data
@@ -55,6 +59,7 @@ impl SyncSupplier {
 	/// Dispatch incoming requests and responses
 	pub fn dispatch_packet(sync: &RwLock<ChainSync>, io: &mut SyncIo, peer: PeerId, packet_id: u8, data: &[u8]) {
 		let rlp = Rlp::new(data);
+
 		let result = match packet_id {
 			GET_BLOCK_BODIES_PACKET => SyncSupplier::return_rlp(io, &rlp, peer,
 				SyncSupplier::return_block_bodies,
@@ -79,9 +84,39 @@ impl SyncSupplier {
 			GET_SNAPSHOT_DATA_PACKET => SyncSupplier::return_rlp(io, &rlp, peer,
 				SyncSupplier::return_snapshot_data,
 				|e| format!("Error sending snapshot data: {:?}", e)),
-			CONSENSUS_DATA_PACKET => ChainSync::on_consensus_packet(io, peer, &rlp),
-			_ => {
+
+			STATUS_PACKET => {
 				sync.write().on_packet(io, peer, packet_id, data);
+				Ok(())
+			},
+			// Packets that require the peer to be confirmed
+			_ => {
+				if !sync.read().peers.contains_key(&peer) {
+					debug!(target:"sync", "Unexpected packet {} from unregistered peer: {}:{}", packet_id, peer, io.peer_info(peer));
+					return;
+				}
+				debug!(target: "sync", "{} -> Dispatching packet: {}", peer, packet_id);
+
+				match packet_id {
+					CONSENSUS_DATA_PACKET => {
+						SyncHandler::on_consensus_packet(io, peer, &rlp)
+					},
+					TRANSACTIONS_PACKET => {
+						let res = {
+							let sync_ro = sync.read();
+							SyncHandler::on_peer_transactions(&*sync_ro, io, peer, &rlp)
+						};
+						if res.is_err() {
+							// peer sent invalid data, disconnect.
+							io.disable_peer(peer);
+							sync.write().deactivate_peer(io, peer);
+						}
+					},
+					_ => {
+						sync.write().on_packet(io, peer, packet_id, data);
+					}
+				}
+
 				Ok(())
 			}
 		};
@@ -133,7 +168,7 @@ impl SyncSupplier {
 		let max_count = cmp::min(MAX_HEADERS_TO_SEND, max_headers);
 		let mut count = 0;
 		let mut data = Bytes::new();
-		let inc = (skip + 1) as BlockNumber;
+		let inc = skip.saturating_add(1) as BlockNumber;
 		let overlay = io.chain_overlay().read();
 
 		// We are checking the `overlay` as well since it's where the ForkBlock
@@ -155,9 +190,9 @@ impl SyncSupplier {
 				if number <= inc || number == 0 {
 					break;
 				}
-				number -= inc;
+				number = number.saturating_sub(inc);
 			} else {
-				number += inc;
+				number = number.saturating_add(inc);
 			}
 		}
 		let mut rlp = RlpStream::new_list(count as usize);
@@ -225,7 +260,8 @@ impl SyncSupplier {
 		let mut added_receipts = 0usize;
 		let mut data = Bytes::new();
 		for i in 0..count {
-			if let Some(mut receipts_bytes) = io.chain().block_receipts(&rlp.val_at::<H256>(i)?) {
+			if let Some(receipts) = io.chain().block_receipts(&rlp.val_at::<H256>(i)?) {
+				let mut receipts_bytes = ::rlp::encode(&receipts);
 				data.append(&mut receipts_bytes);
 				added_receipts += receipts_bytes.len();
 				added_headers += 1;
@@ -306,11 +342,11 @@ mod test {
 	use bytes::Bytes;
 	use rlp::{Rlp, RlpStream};
 	use super::{*, super::tests::*};
+	use blocks::SyncHeader;
 	use ethcore::client::{BlockChainClient, EachBlockWith, TestBlockChainClient};
 
 	#[test]
 	fn return_block_headers() {
-		use ethcore::views::HeaderView;
 		fn make_hash_req(h: &H256, count: usize, skip: usize, reverse: bool) -> Bytes {
 			let mut rlp = RlpStream::new_list(4);
 			rlp.append(h);
@@ -328,16 +364,16 @@ mod test {
 			rlp.append(&if reverse {1u32} else {0u32});
 			rlp.out()
 		}
-		fn to_header_vec(rlp: ::chain::RlpResponseResult) -> Vec<Bytes> {
-			Rlp::new(&rlp.unwrap().unwrap().1.out()).iter().map(|r| r.as_raw().to_vec()).collect()
+		fn to_header_vec(rlp: ::chain::RlpResponseResult) -> Vec<SyncHeader> {
+			Rlp::new(&rlp.unwrap().unwrap().1.out()).iter().map(|r| SyncHeader::from_rlp(r.as_raw().to_vec()).unwrap()).collect()
 		}
 
 		let mut client = TestBlockChainClient::new();
 		client.add_blocks(100, EachBlockWith::Nothing);
 		let blocks: Vec<_> = (0 .. 100)
 			.map(|i| (&client as &BlockChainClient).block(BlockId::Number(i as BlockNumber)).map(|b| b.into_inner()).unwrap()).collect();
-		let headers: Vec<_> = blocks.iter().map(|b| Rlp::new(b).at(0).unwrap().as_raw().to_vec()).collect();
-		let hashes: Vec<_> = headers.iter().map(|h| view!(HeaderView, h).hash()).collect();
+		let headers: Vec<_> = blocks.iter().map(|b| SyncHeader::from_rlp(Rlp::new(b).at(0).unwrap().as_raw().to_vec()).unwrap()).collect();
+		let hashes: Vec<_> = headers.iter().map(|h| h.header.hash()).collect();
 
 		let queue = RwLock::new(VecDeque::new());
 		let ss = TestSnapshotService::new();
@@ -402,7 +438,7 @@ mod test {
 
 		io.sender = Some(2usize);
 
-		ChainSync::dispatch_packet(&RwLock::new(sync), &mut io, 0usize, GET_NODE_DATA_PACKET, &node_request);
+		SyncSupplier::dispatch_packet(&RwLock::new(sync), &mut io, 0usize, GET_NODE_DATA_PACKET, &node_request);
 		assert_eq!(1, io.packets.len());
 	}
 
@@ -444,7 +480,7 @@ mod test {
 		assert_eq!(603, rlp_result.unwrap().1.out().len());
 
 		io.sender = Some(2usize);
-		ChainSync::dispatch_packet(&RwLock::new(sync), &mut io, 0usize, GET_RECEIPTS_PACKET, &receipts_request);
+		SyncSupplier::dispatch_packet(&RwLock::new(sync), &mut io, 0usize, GET_RECEIPTS_PACKET, &receipts_request);
 		assert_eq!(1, io.packets.len());
 	}
 }
