@@ -135,6 +135,7 @@ members = [
 	"whisper/cli",
 	"util/triehash-ethereum",
 	"util/keccak-hasher",
+	"util/hash",
 	"util/patricia-trie-ethereum",
 	"util/fastmap",
 ]

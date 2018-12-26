@@ -129,13 +129,7 @@
 					"0xbb9bc244d798123fde783fcc1c72d3bb8c189413",
 					"0x807640a13483f8ac783c557fcdf27be11ea4ac7a"
 				],
-				"eip150Transition": "0x259518",
-				"eip160Transition": 2675000,
-				"eip161abcTransition": 2675000,
-				"eip161dTransition": 2675000,
-				"eip649Reward": "0x29A2241AF62C0000",
 				"eip100bTransition": 4370000,
-				"eip649Transition": 4370000,
 				"etgHardforkTransition": 4730666,
 				"etgHardforkDevAccounts": [
 					"0x182f3727434e5943658760338fC8800080997deD",
@@ -176,15 +170,22 @@
 		"chainID" : "0x88",
 		"forkBlock": "0x1d4c00",
 		"forkCanonHash": "0x4985f5ca3d2afbec36529aa96f74de3cc10a2a4a6c44f2157a57d2c6059a11bb",
+		"eip150Transition": "0x259518",
+		"eip160Transition": 2675000,
+		"eip161abcTransition": 2675000,
+		"eip161dTransition": 2675000,
 		"eip155Transition": 2675000,
 		"etgHardforkTransition": 4730666,
-		"eip98Transition": "0x7fffffffffffff",
-		"eip86Transition": "0x7fffffffffffff",
 		"maxCodeSize": 24576,
+		"maxCodeSizeTransition": 2675000,
 		"eip140Transition": 4370000,
 		"eip211Transition": 4370000,
 		"eip214Transition": 4370000,
-		"eip658Transition": 4370000
+		"eip658Transition": 4370000,
+		"eip145Transition": 7080000,
+		"eip1014Transition": 7080000,
+		"eip1052Transition": 7080000,
+		"eip1283Transition": 7080000
 	},
 	"genesis": {
 		"seal": {
@@ -202,6 +203,8 @@
 		"stateRoot": "0xd7f8974fb5ac78d9ac099b9ad5018bedc2ce0a72dad1827a1709da30580f0544"
 	},
 	"nodes": [
+		"enode://d2b98a9ba461b394ff140f74b4ee1c0721859a925e40f5ee0203839f10e78d39f3eb1f1aff78b7c29fe8df564ce34cf87b3379225f0a8dd9ffaeb0dc152bf3c6@121.201.57.155:32800",
+		"enode://3d21daa721d7451d4204108b0119709608799037123460c07625e81731f68b119739a9ef0bf76a99bdfe36374c397f0be0ddf203831e10af3469fc3f8d9919f8@142.93.240.228:32800",
 		"enode://67ce25dc308305ef74ac9898eae1af32e89d0f4a5616c030ce9bbc752e690623c581417a86d0e5981368e3a1d6d784faf22f3dbc2fd8380474fa1347c7e09614@167.99.226.115:32800",
 		"enode://d2d3c7a458b10519dddf03582e3f91638f6c5c892ddfa8999c7ef28261f02cb0ce6edcefd4a87de3033c55dc8ab95db4690f611183b401e60871bfafe2887eaf@206.189.72.17:32800",
 		"enode://f5f740b3eb99c8898cef502513108ebb05ffe944497e026f8e9855acfc61b7324fb027977dabdd7f2b6f702356ca934e293c4af54b0a6079118d528ea72cf97b@206.189.75.108:32800"
