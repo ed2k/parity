@@ -24,7 +24,7 @@ use cache::{NodeCache, NodeCacheBuilder};
 use seed_compute::SeedHashCompute;
 use shared::*;
 use std::io;
-use progpow::{create_light_cache, get_block_progpow_hash, get_from_mix};
+use myprogpow::{create_light_cache, get_block_progpow_hash, get_from_mix};
 
 use std::{mem, ptr};
 use std::path::Path;

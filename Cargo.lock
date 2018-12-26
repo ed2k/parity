@@ -1821,7 +1821,6 @@ name = "keccak-hash"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "gcc 0.3.55 (registry+https://github.com/rust-lang/crates.io-index)",
  "ethereum-types 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "tiny-keccak 1.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -1833,6 +1832,16 @@ dependencies = [
  "ethereum-types 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "hashdb 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "plain_hasher 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tiny-keccak 1.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "keccak-progpow"
+version = "0.1.2"
+dependencies = [
+ "ethereum-types 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gcc 0.3.55 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tempdir 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "tiny-keccak 1.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -2374,6 +2383,7 @@ dependencies = [
  "journaldb 0.2.0",
  "jsonrpc-core 9.0.0 (git+https://github.com/paritytech/jsonrpc.git?branch=parity-2.2)",
  "keccak-hash 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "keccak-progpow 0.1.2",
  "kvdb 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "kvdb-rocksdb 0.1.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",

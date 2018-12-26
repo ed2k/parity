@@ -17,7 +17,7 @@
 extern crate either;
 extern crate ethereum_types;
 extern crate memmap;
-extern crate keccak_hash as progpow;
+extern crate keccak_progpow as myprogpow;
 extern crate parking_lot;
 extern crate primal;
 
@@ -44,7 +44,7 @@ use parking_lot::Mutex;
 pub use seed_compute::SeedHashCompute;
 pub use shared::ETHASH_EPOCH_LENGTH;
 use shared::PROGPOW_START;
-use progpow::{create_light_cache};
+use myprogpow::{create_light_cache};
 use std::mem;
 use std::path::{Path, PathBuf};
 
