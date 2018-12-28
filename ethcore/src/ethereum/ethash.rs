@@ -308,7 +308,11 @@ impl Engine<EthereumMachine> for Arc<Ethash> {
 											self.ethash_params.etg_hardfork_block_reward_halving_interval,
 											self.ethash_params.etg_hardfork_block_reward,
 											number)
-				} else {
+//				} else if number >= self.ethash_params.eip649_transition {
+//            		self.ethash_params.eip649_reward.unwrap_or(self.ethash_params.block_reward)
+				} else if number >= 4_370_0000 {
+					U256::from(0x29A2241AF62C0000)
+        		} else {
 					*reward
 				};
 

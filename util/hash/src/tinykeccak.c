@@ -1169,6 +1169,7 @@ uint32_t calculate_full_dataset_num_items(uint32_t epoch_number)
 
 
 epoch_context g_ctx = {0};
+epoch_context g_ctx_old = {0};
 
 hash512* create_light_cache(uint32_t epoch) 
 {  
@@ -1176,12 +1177,24 @@ hash512* create_light_cache(uint32_t epoch)
         // busy wait
         usleep(1000);
     }     
-    if (g_ctx.epoch_number == epoch && g_ctx.light_cache) {
+    if (g_ctx.epoch_number == epoch) {
         return g_ctx.light_cache;
     }
 
+    while (g_ctx_old.refcount) {
+        // busy wait
+        usleep(1000);
+    }     
+    if (g_ctx_old.epoch_number == epoch) {
+        return g_ctx_old.light_cache;
+    }
+
+    epoch_context *ctx_p = &g_ctx;
+    if (g_ctx.epoch_number > g_ctx_old.epoch_number) {
+        ctx_p = &g_ctx_old;
+    }
     /* about to create new light_cache, should put a lock to block new progpow_hash call */
-    g_ctx.refcount = 1;
+    ctx_p->refcount = 1;
 
     uint32_t lcni = calculate_light_cache_num_items(epoch);
     hash512* cache =  malloc(lcni * 64);
@@ -1190,17 +1203,17 @@ hash512* create_light_cache(uint32_t epoch)
     build_light_cache(cache, lcni, &epoch_seed);
     // assume at this point all the ongoing progpow_hash calls are done
     printf("!!! build_light_cache %d\n", epoch);
-    if (g_ctx.light_cache) {
-        printf("!!! free light_cache for %d\n", g_ctx.epoch_number);
-        free(g_ctx.light_cache); 
+    if (ctx_p->light_cache) {
+        printf("!!! free light_cache for %d\n", ctx_p->epoch_number);
+        free(ctx_p->light_cache); 
     }
-    g_ctx.light_cache_num_items = lcni;
-    g_ctx.full_dataset_num_items = calculate_full_dataset_num_items(epoch);
-    g_ctx.light_cache = cache;
-    g_ctx.epoch_number = epoch;
+    ctx_p->light_cache_num_items = lcni;
+    ctx_p->full_dataset_num_items = calculate_full_dataset_num_items(epoch);
+    ctx_p->light_cache = cache;
+    ctx_p->epoch_number = epoch;
 
-    g_ctx.refcount = 0;
-    return g_ctx.light_cache;
+    ctx_p->refcount = 0;
+    return ctx_p->light_cache;
 }
 
 #include <inttypes.h>
