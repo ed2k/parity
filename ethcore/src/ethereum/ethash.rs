@@ -128,6 +128,7 @@ pub struct EthashParams {
 }
 
 impl EthashParams {
+    #[allow(missing_docs)]
     pub fn dump_etg_info(&self) {
         // log all the necessary info for ETG network
 
@@ -275,6 +276,7 @@ impl Engine<EthereumMachine> for Arc<Ethash> {
 
 		let rewards = match self.ethash_params.block_reward_contract {
 			Some(ref c) if number >= self.ethash_params.block_reward_contract_transition => {
+				println!("on_close_block contract transition {}", number);
 				let mut beneficiaries = Vec::new();
 
 				beneficiaries.push((author, RewardKind::Author));
@@ -311,7 +313,7 @@ impl Engine<EthereumMachine> for Arc<Ethash> {
 //				} else if number >= self.ethash_params.eip649_transition {
 //            		self.ethash_params.eip649_reward.unwrap_or(self.ethash_params.block_reward)
 				} else if number >= 4_370_0000 {
-					U256::from(0x29A2241AF62C0000)
+					U256::from(0x29A2241AF62C0000u64)
         		} else {
 					*reward
 				};
@@ -401,7 +403,7 @@ impl Engine<EthereumMachine> for Arc<Ethash> {
 		let result = self.pow.compute_light(header.number() as u64, &header.bare_hash().0, seal.nonce.low_u64());
 		let mix = H256(result.mix_hash);
 		let difficulty = ethash::boundary_to_difficulty(&H256(result.value));
-		trace!(target: "miner", "num: {num}, seed: {seed}, h: {h}, non: {non}, mix: {mix}, res: {res}",
+		info!(target: "miner", "num: {num}, seed: {seed}, h: {h}, non: {non}, mix: {mix}, res: {res}",
 			   num = header.number() as u64,
 			   seed = H256(slow_hash_block_number(header.number() as u64)),
 			   h = header.bare_hash(),

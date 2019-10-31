@@ -128,6 +128,7 @@ impl Restoration {
 
 	// feeds a state chunk, aborts early if `flag` becomes false.
 	fn feed_state(&mut self, hash: H256, chunk: &[u8], flag: &AtomicBool) -> Result<(), Error> {
+		info!(target: "snapshot", "feed_state: hash {}", hash);
 		if self.state_chunks_left.contains(&hash) {
 			let expected_len = snappy::decompressed_len(chunk)?;
 			if expected_len > MAX_CHUNK_SIZE {
@@ -150,6 +151,7 @@ impl Restoration {
 
 	// feeds a block chunk
 	fn feed_blocks(&mut self, hash: H256, chunk: &[u8], engine: &EthEngine, flag: &AtomicBool) -> Result<(), Error> {
+		info!(target: "snapshot", "feed_blocks: hash {}", hash);
 		if self.block_chunks_left.contains(&hash) {
 			let expected_len = snappy::decompressed_len(chunk)?;
 			if expected_len > MAX_CHUNK_SIZE {
@@ -716,6 +718,7 @@ impl Service {
 					return Ok(());
 				},
 				RestorationStatus::Ongoing { .. } | RestorationStatus::Initializing { .. } => {
+					info!(target: "snapshot", "restore chunk {:x} ", hash);
 					let (res, db) = {
 						let rest = match *restoration {
 							Some(ref mut r) => r,

@@ -190,7 +190,12 @@ impl<'a> Discovery<'a> {
 	}
 
 	fn update_node(&mut self, e: NodeEntry) -> Option<TableUpdates> {
+        // silient drop non ete node port
+        if 32_800 != e.endpoint.udp_port {
+            return None;
+        }
 		trace!(target: "discovery", "Inserting {:?}", &e);
+
 		let id_hash = keccak(e.id);
 		let dist = match Discovery::distance(&self.id_hash, &id_hash) {
 			Some(dist) => dist,
@@ -532,7 +537,7 @@ impl<'a> Discovery<'a> {
 		if let Some(node) = expected_node {
 			Ok(self.update_node(node))
 		} else {
-			debug!(target: "discovery", "Got unexpected Pong from {:?} ; request not found", &from);
+			trace!(target: "discovery", "Got unexpected Pong from {:?} ; request not found", &from);
 			Ok(None)
 		}
 	}

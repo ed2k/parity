@@ -943,7 +943,7 @@ impl ChainSync {
 		if force || higher_difficulty || self.old_blocks.is_some() {
 			match self.state {
 				SyncState::WaitingPeers => {
-					trace!(
+					info!(
 						target: "sync",
 						"Checking snapshot sync: {} vs {} (peer: {})",
 						peer_snapshot_number,
