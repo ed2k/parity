@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! DB Migration module.
 
@@ -32,7 +32,7 @@ use std::{fs, io, error};
 use kvdb::DBTransaction;
 use kvdb_rocksdb::{CompactionProfile, Database, DatabaseConfig};
 
-fn other_io_err<E>(e: E) -> io::Error where E: Into<Box<error::Error + Send + Sync>> {
+fn other_io_err<E>(e: E) -> io::Error where E: Into<Box<dyn error::Error + Send + Sync>> {
 	io::Error::new(io::ErrorKind::Other, e)
 }
 
@@ -209,7 +209,7 @@ impl TempIndex {
 /// Manages database migration.
 pub struct Manager {
 	config: Config,
-	migrations: Vec<Box<Migration>>,
+	migrations: Vec<Box<dyn Migration>>,
 }
 
 impl Manager {
@@ -317,7 +317,7 @@ impl Manager {
 	}
 
 	/// Find all needed migrations.
-	fn migrations_from(&mut self, version: u32) -> Vec<&mut Box<Migration>> {
+	fn migrations_from(&mut self, version: u32) -> Vec<&mut Box<dyn Migration>> {
 		self.migrations.iter_mut().filter(|m| m.version() > version).collect()
 	}
 }

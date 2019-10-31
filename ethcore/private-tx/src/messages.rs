@@ -1,25 +1,25 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
-use ethereum_types::{H256, U256, Address};
+use ethereum_types::{H256, U256, Address, BigEndianHash};
 use bytes::Bytes;
 use hash::keccak;
 use rlp::Encodable;
-use ethkey::Signature;
-use transaction::signature::{add_chain_replay_protection, check_replay_protection};
+use crypto::publickey::Signature;
+use types::transaction::signature::{add_chain_replay_protection, check_replay_protection};
 
 /// Message with private transaction encrypted
 #[derive(Default, Debug, Clone, PartialEq, RlpEncodable, RlpDecodable, Eq)]
@@ -38,7 +38,7 @@ impl PrivateTransaction {
 		PrivateTransaction {
 			encrypted,
 			contract,
-			hash: 0.into(),
+			hash: H256::zero(),
 		}.compute_hash()
 	}
 
@@ -87,7 +87,7 @@ impl SignedPrivateTransaction {
 			r: sig.r().into(),
 			s: sig.s().into(),
 			v: add_chain_replay_protection(sig.v() as u64, chain_id),
-			hash: 0.into(),
+			hash: H256::zero(),
 		}.compute_hash()
 	}
 
@@ -100,7 +100,11 @@ impl SignedPrivateTransaction {
 
 	/// Construct a signature object from the sig.
 	pub fn signature(&self) -> Signature {
-		Signature::from_rsv(&self.r.into(), &self.s.into(), self.standard_v())
+		Signature::from_rsv(
+			&BigEndianHash::from_uint(&self.r),
+			&BigEndianHash::from_uint(&self.s),
+			self.standard_v(),
+		)
 	}
 
 	/// Get the hash of of the original transaction.

@@ -1,22 +1,25 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 #[macro_use]
 mod usage;
 mod presets;
+
+use std::collections::HashSet;
+use super::helpers;
 
 usage! {
 	{
@@ -217,6 +220,15 @@ usage! {
 			CMD cmd_db_kill {
 				"Clean the database of the given --chain (default: mainnet)",
 			}
+
+			CMD cmd_db_reset {
+				"Removes NUM latests blocks from the db",
+
+				ARG arg_db_reset_num: (u32) = 10u32,
+				"<NUM>",
+				"Number of blocks to revert",
+			}
+
 		}
 
 		CMD cmd_export_hardcoded_sync
@@ -288,7 +300,7 @@ usage! {
 
 			ARG arg_chain: (String) = "etg", or |c: &Config| c.parity.as_ref()?.chain.clone(),
 			"--chain=[CHAIN]",
-			"Specify the blockchain type. CHAIN may be either a JSON chain specification file or ethereum, classic, poacore, tobalaba, expanse, musicoin, ellaism, easthub, social, mix, callisto, morden, ropsten, kovan, poasokol, testnet, or dev.",
+			"Specify the blockchain type. CHAIN may be either a JSON chain specification file or ethereum, classic, poacore, xdai, volta, ewc, musicoin, ellaism, mix, callisto, morden, ropsten, kovan, rinkeby, goerli, kotti, poasokol, testnet, or dev.",
 
 			ARG arg_keys_path: (String) = "$BASE/keys", or |c: &Config| c.parity.as_ref()?.keys_path.clone(),
 			"--keys-path=[PATH]",
@@ -309,7 +321,7 @@ usage! {
 		["Convenience Options"]
 			FLAG flag_unsafe_expose: (bool) = false, or |c: &Config| c.misc.as_ref()?.unsafe_expose,
 			"--unsafe-expose",
-			"All servers will listen on external interfaces and will be remotely accessible. It's equivalent with setting the following: --[ws,jsonrpc,ui,ipfs-api,secretstore,stratum,dapps,secretstore-http]-interface=all --*-hosts=all    This option is UNSAFE and should be used with great care!",
+			"All servers will listen on external interfaces and will be remotely accessible. It's equivalent with setting the following: --[ws,jsonrpc,ipfs-api,secretstore,stratum,dapps,secretstore-http]-interface=all --*-hosts=all    This option is UNSAFE and should be used with great care!",
 
 			ARG arg_config: (String) = "$BASE/config.toml", or |_| None,
 			"-c, --config=[CONFIG]",
@@ -320,10 +332,6 @@ usage! {
 			"Add SHIFT to all port numbers Parity is listening on. Includes network port and all servers (HTTP JSON-RPC, WebSockets JSON-RPC, IPFS, SecretStore).",
 
 		["Account Options"]
-			FLAG flag_no_hardware_wallets: (bool) = false, or |c: &Config| c.account.as_ref()?.disable_hardware.clone(),
-			"--no-hardware-wallets",
-			"Disables hardware wallet support.",
-
 			FLAG flag_fast_unlock: (bool) = false, or |c: &Config| c.account.as_ref()?.fast_unlock.clone(),
 			"--fast-unlock",
 			"Use drastically faster unlocking mode. This setting causes raw secrets to be stored unprotected in memory, so use with care.",
@@ -348,6 +356,10 @@ usage! {
 			FLAG flag_private_enabled: (bool) = false, or |c: &Config| c.private_tx.as_ref()?.enabled,
 			"--private-tx-enabled",
 			"Enable private transactions.",
+
+			FLAG flag_private_state_offchain: (bool) = false, or |c: &Config| c.private_tx.as_ref()?.state_offchain,
+			"--private-state-offchain",
+			"Store private state offchain (in the local DB).",
 
 			ARG arg_private_signer: (Option<String>) = None, or |c: &Config| c.private_tx.as_ref()?.signer.clone(),
 			"--private-signer=[ACCOUNT]",
@@ -461,7 +473,6 @@ usage! {
 				Ok(())
 			},
 
-
 		["API and Console Options – HTTP JSON-RPC"]
 			FLAG flag_jsonrpc_allow_missing_blocks: (bool) = false, or |c: &Config| c.rpc.as_ref()?.allow_missing_blocks.clone(),
 			"--jsonrpc-allow-missing-blocks",
@@ -487,9 +498,9 @@ usage! {
 			"--jsonrpc-interface=[IP]",
 			"Specify the hostname portion of the HTTP JSON-RPC API server, IP should be an interface's IP address, or all (all interfaces) or local.",
 
-			ARG arg_jsonrpc_apis: (String) = "web3,eth,pubsub,net,parity,private,parity_pubsub,traces,rpc,shh,shh_pubsub", or |c: &Config| c.rpc.as_ref()?.apis.as_ref().map(|vec| vec.join(",")),
+			ARG arg_jsonrpc_apis: (String) = "web3,eth,pubsub,net,parity,private,parity_pubsub,traces,rpc,parity_transactions_pool", or |c: &Config| c.rpc.as_ref()?.apis.as_ref().map(|vec| vec.join(",")),
 			"--jsonrpc-apis=[APIS]",
-			"Specify the APIs available through the HTTP JSON-RPC interface using a comma-delimited list of API names. Possible names are: all, safe, debug, web3, net, eth, pubsub, personal, signer, parity, parity_pubsub, parity_accounts, parity_set, traces, rpc, secretstore, shh, shh_pubsub. You can also disable a specific API by putting '-' in the front, example: all,-personal. 'safe' enables the following APIs: web3, net, eth, pubsub, parity, parity_pubsub, traces, rpc, shh, shh_pubsub",
+			"Specify the APIs available through the HTTP JSON-RPC interface using a comma-delimited list of API names. Possible names are: all, safe, debug, web3, net, eth, pubsub, personal, signer, parity, parity_pubsub, parity_accounts, parity_set, traces, rpc, secretstore. You can also disable a specific API by putting '-' in the front, example: all,-personal. 'safe' enables the following APIs: web3, net, eth, pubsub, parity, parity_pubsub, traces, rpc",
 
 			ARG arg_jsonrpc_hosts: (String) = "none", or |c: &Config| c.rpc.as_ref()?.hosts.as_ref().map(|vec| vec.join(",")),
 			"--jsonrpc-hosts=[HOSTS]",
@@ -528,9 +539,9 @@ usage! {
 			"--ws-interface=[IP]",
 			"Specify the hostname portion of the WebSockets JSON-RPC server, IP should be an interface's IP address, or all (all interfaces) or local.",
 
-			ARG arg_ws_apis: (String) = "web3,eth,pubsub,net,parity,parity_pubsub,private,traces,rpc,shh,shh_pubsub", or |c: &Config| c.websockets.as_ref()?.apis.as_ref().map(|vec| vec.join(",")),
+			ARG arg_ws_apis: (String) = "web3,eth,pubsub,net,parity,parity_pubsub,private,traces,rpc,parity_transactions_pool", or |c: &Config| c.websockets.as_ref()?.apis.as_ref().map(|vec| vec.join(",")),
 			"--ws-apis=[APIS]",
-			"Specify the JSON-RPC APIs available through the WebSockets interface using a comma-delimited list of API names. Possible names are: all, safe, web3, net, eth, pubsub, personal, signer, parity, parity_pubsub, parity_accounts, parity_set, traces, rpc, secretstore, shh, shh_pubsub. You can also disable a specific API by putting '-' in the front, example: all,-personal. 'safe' enables the following APIs: web3, net, eth, pubsub, parity, parity_pubsub, traces, rpc, shh, shh_pubsub",
+			"Specify the JSON-RPC APIs available through the WebSockets interface using a comma-delimited list of API names. Possible names are: all, safe, web3, net, eth, pubsub, personal, signer, parity, parity_pubsub, parity_accounts, parity_set, traces, rpc, secretstore. You can also disable a specific API by putting '-' in the front, example: all,-personal. 'safe' enables the following APIs: web3, net, eth, pubsub, parity, parity_pubsub, traces, rpc",
 
 			ARG arg_ws_origins: (String) = "parity://*,chrome-extension://*,moz-extension://*", or |c: &Config| c.websockets.as_ref()?.origins.as_ref().map(|vec| vec.join(",")),
 			"--ws-origins=[URL]",
@@ -553,9 +564,9 @@ usage! {
 			"--ipc-path=[PATH]",
 			"Specify custom path for JSON-RPC over IPC service.",
 
-			ARG arg_ipc_apis: (String) = "web3,eth,pubsub,net,parity,parity_pubsub,parity_accounts,private,traces,rpc,shh,shh_pubsub", or |c: &Config| c.ipc.as_ref()?.apis.as_ref().map(|vec| vec.join(",")),
+			ARG arg_ipc_apis: (String) = "web3,eth,pubsub,net,parity,parity_pubsub,parity_accounts,private,traces,rpc,parity_transactions_pool", or |c: &Config| c.ipc.as_ref()?.apis.as_ref().map(|vec| vec.join(",")),
 			"--ipc-apis=[APIS]",
-			"Specify custom API set available via JSON-RPC over IPC using a comma-delimited list of API names. Possible names are: all, safe, web3, net, eth, pubsub, personal, signer, parity, parity_pubsub, parity_accounts, parity_set, traces, rpc, secretstore, shh, shh_pubsub. You can also disable a specific API by putting '-' in the front, example: all,-personal. 'safe' enables the following APIs: web3, net, eth, pubsub, parity, parity_pubsub, traces, rpc, shh, shh_pubsub",
+			"Specify custom API set available via JSON-RPC over IPC using a comma-delimited list of API names. Possible names are: all, safe, web3, net, eth, pubsub, personal, signer, parity, parity_pubsub, parity_accounts, parity_set, traces, rpc, secretstore. You can also disable a specific API by putting '-' in the front, example: all,-personal. 'safe' enables the following APIs: web3, net, eth, pubsub, parity, parity_pubsub, traces, rpc",
 
 		["API and Console Options – IPFS"]
 			FLAG flag_ipfs_api: (bool) = false, or |c: &Config| c.ipfs.as_ref()?.enable.clone(),
@@ -611,6 +622,10 @@ usage! {
 			FLAG flag_no_secretstore_auto_migrate: (bool) = false, or |c: &Config| c.secretstore.as_ref()?.disable_auto_migrate.clone(),
 			"--no-secretstore-auto-migrate",
 			"Do not run servers set change session automatically when servers set changes. This option has no effect when servers set is read from configuration file.",
+
+			ARG arg_secretstore_http_cors: (String) = "none", or |c: &Config| c.secretstore.as_ref()?.cors.as_ref().map(|vec| vec.join(",")),
+			"--secretstore-http-cors=[URL]",
+			"Specify CORS header for Secret Store HTTP API responses. Special options: \"all\", \"none\".",
 
 			ARG arg_secretstore_acl_contract: (Option<String>) = Some("registry".into()), or |c: &Config| c.secretstore.as_ref()?.acl_contract.clone(),
 			"--secretstore-acl-contract=[SOURCE]",
@@ -705,7 +720,9 @@ usage! {
 			"--no-persistent-txqueue",
 			"Don't save pending local transactions to disk to be restored whenever the node restarts.",
 
-			FLAG flag_stratum: (bool) = false, or |c: &Config| Some(c.stratum.is_some()),
+			// For backward compatibility; Stratum should be enabled if the config file
+			// contains a `[stratum]` section and it is not explicitly disabled (disable = true)
+			FLAG flag_stratum: (bool) = false, or |c: &Config| Some(c.stratum.as_ref().map(|s| s.disable != Some(true)).unwrap_or(false)),
 			"--stratum",
 			"Run Stratum server for miner push notification.",
 
@@ -760,6 +777,10 @@ usage! {
 			ARG arg_tx_queue_per_sender: (Option<usize>) = None, or |c: &Config| c.mining.as_ref()?.tx_queue_per_sender.clone(),
 			"--tx-queue-per-sender=[LIMIT]",
 			"Maximum number of transactions per sender in the queue. By default it's 1% of the entire queue, but not less than 16.",
+
+			ARG arg_tx_queue_locals: (Option<String>) = None, or |c: &Config| helpers::join_set(c.mining.as_ref()?.tx_queue_locals.as_ref()),
+			"--tx-queue-locals=[ACCOUNTS]",
+			"Specify local accounts for which transactions are prioritized in the queue. ACCOUNTS is a comma-delimited list of addresses.",
 
 			ARG arg_tx_queue_strategy: (String) = "gas_price", or |c: &Config| c.mining.as_ref()?.tx_queue_strategy.clone(),
 			"--tx-queue-strategy=[S]",
@@ -900,7 +921,7 @@ usage! {
 		["Snapshot Options"]
 			FLAG flag_no_periodic_snapshot: (bool) = false, or |c: &Config| c.snapshots.as_ref()?.disable_periodic.clone(),
 			"--no-periodic-snapshot",
-			"Disable automated snapshots which usually occur once every 10000 blocks.",
+			"Disable automated snapshots which usually occur once every 5000 blocks.",
 
 			ARG arg_snapshot_threads: (Option<usize>) = None, or |c: &Config| c.snapshots.as_ref()?.processing_threads,
 			"--snapshot-threads=[NUM]",
@@ -909,11 +930,11 @@ usage! {
 		["Whisper Options"]
 			FLAG flag_whisper: (bool) = false, or |c: &Config| c.whisper.as_ref()?.enabled,
 			"--whisper",
-			"Enable the Whisper network.",
+			"Does nothing. Whisper has been moved to https://github.com/paritytech/whisper",
 
- 			ARG arg_whisper_pool_size: (usize) = 10usize, or |c: &Config| c.whisper.as_ref()?.pool_size.clone(),
+			ARG arg_whisper_pool_size: (Option<usize>) = None, or |c: &Config| c.whisper.as_ref()?.pool_size.clone(),
 			"--whisper-pool-size=[MB]",
-			"Target size of the whisper message pool in megabytes.",
+			"Does nothing. Whisper has been moved to https://github.com/paritytech/whisper",
 
 		["Legacy Options"]
 			// Options that are hidden from config, but are still unique for its functionality.
@@ -1176,7 +1197,6 @@ struct Account {
 	password: Option<Vec<String>>,
 	keys_iterations: Option<u32>,
 	refresh_time: Option<u64>,
-	disable_hardware: Option<bool>,
 	fast_unlock: Option<bool>,
 }
 
@@ -1184,6 +1204,7 @@ struct Account {
 #[serde(deny_unknown_fields)]
 struct PrivateTransactions {
 	enabled: Option<bool>,
+	state_offchain: Option<bool>,
 	signer: Option<String>,
 	validators: Option<Vec<String>>,
 	account: Option<String>,
@@ -1311,6 +1332,7 @@ struct SecretStore {
 	http_interface: Option<String>,
 	http_port: Option<u16>,
 	path: Option<String>,
+	cors: Option<Vec<String>>
 }
 
 #[derive(Default, Debug, PartialEq, Deserialize)]
@@ -1348,6 +1370,7 @@ struct Mining {
 	tx_queue_size: Option<usize>,
 	tx_queue_per_sender: Option<usize>,
 	tx_queue_mem_limit: Option<u32>,
+	tx_queue_locals: Option<HashSet<String>>,
 	tx_queue_strategy: Option<String>,
 	tx_queue_ban_count: Option<u16>,
 	tx_queue_ban_time: Option<u16>,
@@ -1363,6 +1386,7 @@ struct Mining {
 #[derive(Default, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Stratum {
+	disable: Option<bool>,
 	interface: Option<String>,
 	port: Option<u16>,
 	secret: Option<String>,
@@ -1580,6 +1604,83 @@ mod tests {
 	}
 
 	#[test]
+	fn should_disable_stratum() {
+		// given
+		let config = toml::from_str(include_str!("./tests/config.stratum_disabled.toml")).unwrap();
+
+		// when
+		let args = Args::parse_with_config(&["parity"], config).unwrap();
+
+		// then
+		assert_eq!(args.flag_stratum, false);
+		assert_eq!(args.arg_stratum_interface, "local".to_owned());
+		assert_eq!(args.arg_stratum_port, 8008u16);
+		assert_eq!(args.arg_stratum_secret, None);
+	}
+
+	#[test]
+	fn should_disable_stratum_when_missing_section() {
+		// given
+		let config = toml::from_str(include_str!("./tests/config.stratum_missing_section.toml")).unwrap();
+
+		// when
+		let args = Args::parse_with_config(&["parity"], config).unwrap();
+
+		// then
+		assert_eq!(args.flag_stratum, false);
+		assert_eq!(args.arg_stratum_interface, "local".to_owned());
+		assert_eq!(args.arg_stratum_port, 8008u16);
+		assert_eq!(args.arg_stratum_secret, None);
+	}
+
+	#[test]
+	fn should_enable_stratum() {
+		// given
+		let config = toml::from_str(include_str!("./tests/config.stratum_enabled.toml")).unwrap();
+
+		// when
+		let args = Args::parse_with_config(&["parity"], config).unwrap();
+
+		// then (with custom configurations)
+		assert_eq!(args.flag_stratum, true);
+		assert_eq!(args.arg_stratum_interface, "some_interface".to_owned());
+		assert_eq!(args.arg_stratum_port, 8007u16);
+		assert_eq!(args.arg_stratum_secret, Some("Yellow".to_owned()));
+	}
+
+	#[test]
+	fn should_enable_stratum_by_param() {
+		// given
+		let config = toml::from_str(include_str!("./tests/config.full.toml")).unwrap();
+
+		// when
+		let args = Args::parse_with_config(&["parity", "--stratum"], config).unwrap();
+
+		// then
+		assert_eq!(args.flag_stratum, true);
+		assert_eq!(args.arg_stratum_interface, "local".to_owned());
+		assert_eq!(args.arg_stratum_port, 8008u16);
+		assert_eq!(args.arg_stratum_secret, None);
+	}
+
+	#[test]
+	// For backward compatibility; Stratum should be enabled if the config file
+	// contains a `[stratum]` section and it is not explicitly disabled (disable = true)
+	fn should_enable_stratum_when_missing_field() {
+		// given
+		let config = toml::from_str(include_str!("./tests/config.stratum_missing_field.toml")).unwrap();
+
+		// when
+		let args = Args::parse_with_config(&["parity"], config).unwrap();
+
+		// then
+		assert_eq!(args.flag_stratum, true);
+		assert_eq!(args.arg_stratum_interface, "local".to_owned());
+		assert_eq!(args.arg_stratum_port, 8008u16);
+		assert_eq!(args.arg_stratum_secret, None);
+	}
+
+	#[test]
 	fn should_parse_full_config() {
 		// given
 		let config = toml::from_str(include_str!("./tests/config.full.toml")).unwrap();
@@ -1613,6 +1714,7 @@ mod tests {
 			cmd_tools_hash: false,
 			cmd_db: false,
 			cmd_db_kill: false,
+			cmd_db_reset: false,
 			cmd_export_hardcoded_sync: false,
 
 			// Arguments
@@ -1632,6 +1734,7 @@ mod tests {
 			arg_dapp_path: None,
 			arg_account_import_path: None,
 			arg_wallet_import_path: None,
+			arg_db_reset_num: 10,
 
 			// -- Operating Options
 			arg_mode: "last".into(),
@@ -1664,11 +1767,11 @@ mod tests {
 			arg_password: vec!["~/.safe/password.file".into()],
 			arg_keys_iterations: 10240u32,
 			arg_accounts_refresh: 5u64,
-			flag_no_hardware_wallets: false,
 			flag_fast_unlock: false,
 
 			// -- Private Transactions Options
 			flag_private_enabled: true,
+			flag_private_state_offchain: false,
 			arg_private_signer: Some("0xdeadbeefcafe0000000000000000000000000000".into()),
 			arg_private_validators: Some("0xdeadbeefcafe0000000000000000000000000000".into()),
 			arg_private_passwords: Some("~/.safe/password.file".into()),
@@ -1756,6 +1859,7 @@ mod tests {
 			arg_secretstore_http_interface: "local".into(),
 			arg_secretstore_http_port: 8082u16,
 			arg_secretstore_path: "$HOME/.parity/secretstore".into(),
+			arg_secretstore_http_cors: "null".into(),
 
 			// IPFS
 			flag_ipfs_api: false,
@@ -1789,6 +1893,7 @@ mod tests {
 			arg_tx_queue_size: 8192usize,
 			arg_tx_queue_per_sender: None,
 			arg_tx_queue_mem_limit: 4u32,
+			arg_tx_queue_locals: Some("0xdeadbeefcafe0000000000000000000000000000".into()),
 			arg_tx_queue_strategy: "gas_factor".into(),
 			arg_tx_queue_ban_count: Some(1u16),
 			arg_tx_queue_ban_time: Some(180u16),
@@ -1843,7 +1948,7 @@ mod tests {
 
 			// -- Whisper options.
 			flag_whisper: false,
-			arg_whisper_pool_size: 20,
+			arg_whisper_pool_size: Some(20),
 
 			// -- Legacy Options
 			flag_warp: false,
@@ -1945,7 +2050,6 @@ mod tests {
 				password: Some(vec!["passwdfile path".into()]),
 				keys_iterations: None,
 				refresh_time: None,
-				disable_hardware: None,
 				fast_unlock: None,
 			}),
 			ui: Some(Ui {
@@ -2033,6 +2137,7 @@ mod tests {
 				http_interface: None,
 				http_port: Some(8082),
 				path: None,
+				cors: None,
 			}),
 			private_tx: None,
 			ipfs: Some(Ipfs {
@@ -2062,6 +2167,7 @@ mod tests {
 				tx_queue_size: Some(8192),
 				tx_queue_per_sender: None,
 				tx_queue_mem_limit: None,
+				tx_queue_locals: None,
 				tx_queue_strategy: None,
 				tx_queue_ban_count: None,
 				tx_queue_ban_time: None,

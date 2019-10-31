@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Client-side stratum job dispatcher and mining notifier handler
 
@@ -21,7 +21,7 @@ use std::net::{SocketAddr, AddrParseError};
 use std::fmt;
 
 use client::{Client, ImportSealedBlock};
-use ethereum_types::{H64, H256, clean_0x, U256};
+use ethereum_types::{H64, H256, U256};
 use ethash::{self, SeedHashCompute};
 #[cfg(feature = "work-notify")]
 use ethcore_miner::work_notify::NotifyWork;
@@ -45,6 +45,14 @@ pub struct Options {
 	pub port: u16,
 	/// Secret for peers
 	pub secret: Option<H256>,
+}
+
+fn clean_0x(s: &str) -> &str {
+	if s.starts_with("0x") {
+		&s[2..]
+	} else {
+		s
+	}
 }
 
 struct SubmitPayload {
@@ -217,8 +225,6 @@ impl NotifyWork for Stratum {
 
 		self.service.push_work_all(
 			self.dispatcher.payload(pow_hash, difficulty, number)
-		).unwrap_or_else(
-			|e| warn!(target: "stratum", "Error while pushing work: {:?}", e)
 		);
 	}
 }
@@ -231,23 +237,20 @@ impl Stratum {
 
 		let dispatcher = Arc::new(StratumJobDispatcher::new(miner, client));
 
-		let stratum_svc = StratumService::start(
+		let service = StratumService::start(
 			&SocketAddr::new(options.listen_addr.parse::<IpAddr>()?, options.port),
 			dispatcher.clone(),
 			options.secret.clone(),
 		)?;
 
-		Ok(Stratum {
-			dispatcher: dispatcher,
-			service: stratum_svc,
-		})
+		Ok(Stratum { dispatcher, service })
 	}
 
 	/// Start STRATUM job dispatcher and register it in the miner
 	#[cfg(feature = "work-notify")]
 	pub fn register(cfg: &Options, miner: Arc<Miner>, client: Weak<Client>) -> Result<(), Error> {
 		let stratum = Stratum::start(cfg, Arc::downgrade(&miner.clone()), client)?;
-		miner.add_work_listener(Box::new(stratum) as Box<NotifyWork>);
+		miner.add_work_listener(Box::new(stratum) as Box<dyn NotifyWork>);
 		Ok(())
 	}
 }

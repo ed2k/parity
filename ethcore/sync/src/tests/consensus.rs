@@ -1,38 +1,45 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::sync::Arc;
-use hash::keccak;
+
+use crate::{
+	api::SyncConfig,
+	tests::helpers::{TestIoHandler, TestNet},
+};
+
+use client_traits::ChainInfo;
+use engine::signer;
+use ethcore::client::Client;
+use ethcore::miner::{self, MinerService};
+use ethcore_io::{IoHandler, IoChannel};
 use ethereum_types::{U256, Address};
-use io::{IoHandler, IoChannel};
-use ethcore::client::{ChainInfo, ClientIoMessage};
-use ethcore::spec::Spec;
-use ethcore::miner::MinerService;
-use ethcore::account_provider::AccountProvider;
-use ethkey::{KeyPair, Secret};
-use transaction::{Action, PendingTransaction, Transaction};
-use super::helpers::*;
-use SyncConfig;
+use parity_crypto::publickey::{KeyPair, Secret};
+use keccak_hash::keccak;
+use common_types::{
+	io_message::ClientIoMessage,
+	transaction::{Action, PendingTransaction, Transaction}
+};
 
 fn new_tx(secret: &Secret, nonce: U256, chain_id: u64) -> PendingTransaction {
 	let signed = Transaction {
 		nonce: nonce.into(),
 		gas_price: 0.into(),
 		gas: 21000.into(),
-		action: Action::Call(Address::default()),
+		action: Action::Call(Address::zero()),
 		value: 0.into(),
 		data: Vec::new(),
 	}.sign(secret, Some(chain_id));
@@ -41,19 +48,16 @@ fn new_tx(secret: &Secret, nonce: U256, chain_id: u64) -> PendingTransaction {
 
 #[test]
 fn authority_round() {
-	let s0 = KeyPair::from_secret_slice(&keccak("1")).unwrap();
-	let s1 = KeyPair::from_secret_slice(&keccak("0")).unwrap();
-	let ap = Arc::new(AccountProvider::transient_provider());
-	ap.insert_account(s0.secret().clone(), &"".into()).unwrap();
-	ap.insert_account(s1.secret().clone(), &"".into()).unwrap();
+	let s0 = KeyPair::from_secret_slice(keccak("1").as_bytes()).unwrap();
+	let s1 = KeyPair::from_secret_slice(keccak("0").as_bytes()).unwrap();
 
-	let chain_id = Spec::new_test_round().chain_id();
-	let mut net = TestNet::with_spec_and_accounts(2, SyncConfig::default(), Spec::new_test_round, Some(ap));
-	let io_handler0: Arc<IoHandler<ClientIoMessage>> = Arc::new(TestIoHandler::new(net.peer(0).chain.clone()));
-	let io_handler1: Arc<IoHandler<ClientIoMessage>> = Arc::new(TestIoHandler::new(net.peer(1).chain.clone()));
+	let chain_id = spec::new_test_round().chain_id();
+	let mut net = TestNet::with_spec(2, SyncConfig::default(), spec::new_test_round);
+	let io_handler0: Arc<dyn IoHandler<ClientIoMessage<Client>>> = Arc::new(TestIoHandler::new(net.peer(0).chain.clone()));
+	let io_handler1: Arc<dyn IoHandler<ClientIoMessage<Client>>> = Arc::new(TestIoHandler::new(net.peer(1).chain.clone()));
 	// Push transaction to both clients. Only one of them gets lucky to produce a block.
-	net.peer(0).miner.set_author(s0.address(), Some("".into())).unwrap();
-	net.peer(1).miner.set_author(s1.address(), Some("".into())).unwrap();
+	net.peer(0).miner.set_author(miner::Author::Sealer(signer::from_keypair(s0.clone())));
+	net.peer(1).miner.set_author(miner::Author::Sealer(signer::from_keypair(s1.clone())));
 	net.peer(0).chain.engine().register_client(Arc::downgrade(&net.peer(0).chain) as _);
 	net.peer(1).chain.engine().register_client(Arc::downgrade(&net.peer(1).chain) as _);
 	net.peer(0).chain.set_io_channel(IoChannel::to_handler(Arc::downgrade(&io_handler1)));
@@ -117,7 +121,7 @@ fn authority_round() {
 	net.peer(1).chain.engine().step();
 	net.peer(1).chain.engine().step();
 	assert_eq!(net.peer(1).chain.chain_info().best_block_number, 5);
-	// Reorg to the longest chain one not ealier view one.
+	// Reorg to the longest chain one not earlier view one.
 	net.sync();
 	let ci0 = net.peer(0).chain.chain_info();
 	let ci1 = net.peer(1).chain.chain_info();

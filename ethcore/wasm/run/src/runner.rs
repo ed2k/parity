@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use fixture::{Fixture, Assert, CallLocator, Source};
 use wasm::WasmInterpreter;
@@ -21,7 +21,7 @@ use vm::tests::FakeExt;
 use std::io::{self, Read};
 use std::{fs, path, fmt};
 use std::sync::Arc;
-use ethereum_types::{U256, H256, H160};
+use ethereum_types::{U256, H256, H160, BigEndianHash};
 use rustc_hex::ToHex;
 
 fn load_code<P: AsRef<path::Path>>(p: P) -> io::Result<Vec<u8>> {
@@ -95,17 +95,17 @@ impl fmt::Display for Fail {
 				write!(
 					f,
 					"Storage key {} value mismatch, expected {}, got: {}",
-					key.to_vec().to_hex(),
-					expected.to_vec().to_hex(),
-					actual.to_vec().to_hex(),
+					key.as_bytes().to_vec().to_hex(),
+					expected.as_bytes().to_vec().to_hex(),
+					actual.as_bytes().to_vec().to_hex(),
 				),
 
 			StorageMismatch { ref key, ref expected, actual: None} =>
 				write!(
 					f,
 					"No expected storage value for key {} found, expected {}",
-					key.to_vec().to_hex(),
-					expected.to_vec().to_hex(),
+					key.as_bytes().to_vec().to_hex(),
+					expected.as_bytes().to_vec().to_hex(),
 				),
 
 			Nonconformity(SpecNonconformity::Address) =>
@@ -115,7 +115,7 @@ impl fmt::Display for Fail {
 }
 
 pub fn construct(
-	ext: &mut vm::Ext,
+	ext: &mut dyn vm::Ext,
 	source: Vec<u8>,
 	arguments: Vec<u8>,
 	sender: H160,
@@ -188,7 +188,7 @@ pub fn run_fixture(fixture: &Fixture) -> Vec<Fail> {
 		for storage_entry in storage.iter() {
 			let key: U256 = storage_entry.key.into();
 			let val: U256 = storage_entry.value.into();
-			ext.store.insert(key.into(), val.into());
+			ext.store.insert(BigEndianHash::from_uint(&key), BigEndianHash::from_uint(&val));
 		}
 	}
 

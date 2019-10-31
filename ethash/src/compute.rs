@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Ethash implementation
 //! See https://github.com/ethereum/wiki/wiki/Ethash
@@ -21,17 +21,18 @@
 
 use keccak::{keccak_512, keccak_256, H256};
 use cache::{NodeCache, NodeCacheBuilder};
+use progpow::{CDag, generate_cdag, progpow, keccak_f800_short, keccak_f800_long};
 use seed_compute::SeedHashCompute;
 use shared::*;
 use std::io;
 use myprogpow::{create_light_cache, get_block_progpow_hash, get_from_mix};
 
-use std::{mem, ptr};
+use std::mem;
 use std::path::Path;
 
 const MIX_WORDS: usize = ETHASH_MIX_BYTES / 4;
 const MIX_NODES: usize = MIX_WORDS / NODE_WORDS;
-const FNV_PRIME: u32 = 0x01000193;
+pub const FNV_PRIME: u32 = 0x01000193;
 
 /// Computation result
 pub struct ProofOfWork {
@@ -41,9 +42,15 @@ pub struct ProofOfWork {
 	pub mix_hash: H256,
 }
 
+enum Algorithm {
+	Hashimoto,
+	Progpow(Box<CDag>),
+}
+
 pub struct Light {
 	block_number: u64,
 	cache: NodeCache,
+	algorithm: Algorithm,
 }
 
 /// Light cache structure
@@ -52,40 +59,62 @@ impl Light {
 		builder: &NodeCacheBuilder,
 		cache_dir: &Path,
 		block_number: u64,
+		progpow_transition: u64,
 	) -> Self {
 		let cache = builder.new_cache(cache_dir.to_path_buf(), block_number);
 		if block_number > PROGPOW_START {
 			unsafe { create_light_cache((block_number/ETHASH_EPOCH_LENGTH) as u32); }
 		}
-		Light {
-			block_number: block_number,
-			cache: cache,
-		}
+
+		let algorithm = if block_number >= progpow_transition {
+			Algorithm::Progpow(Box::new(generate_cdag(cache.as_ref())))
+		} else {
+			Algorithm::Hashimoto
+		};
+
+		Light { block_number, cache, algorithm }
 	}
 
 	/// Calculate the light boundary data
 	/// `header_hash` - The header hash to pack into the mix
 	/// `nonce` - The nonce to pack into the mix
-	pub fn compute(&self, block_number: u64, header_hash: &H256, nonce: u64) -> ProofOfWork {
+	pub fn compute(&self, header_hash: &H256, nonce: u64, block_number: u64) -> ProofOfWork {
 		if block_number > PROGPOW_START {
 			info!("light_progpow at {} {:x}", block_number, nonce);
-			light_progpow(self, header_hash, nonce)
-		} else {
-			info!("light_compute at {} {:x}", block_number, nonce);
-			light_compute(self, header_hash, nonce)
+			return light_progpow(self, header_hash, nonce)
 		}
+		match self.algorithm {
+			Algorithm::Progpow(ref c_dag) => {
+				let (value, mix_hash) = progpow(
+					*header_hash,
+					nonce,
+					block_number,
+					self.cache.as_ref(),
+					c_dag,
+				);
+
+				ProofOfWork { value, mix_hash }
+			},
+			Algorithm::Hashimoto => light_compute(self, header_hash, nonce),
+		}
+
 	}
 
 	pub fn from_file_with_builder(
 		builder: &NodeCacheBuilder,
 		cache_dir: &Path,
 		block_number: u64,
+		progpow_transition: u64,
 	) -> io::Result<Self> {
 		let cache = builder.from_file(cache_dir.to_path_buf(), block_number)?;
-		Ok(Light {
-			block_number: block_number,
-			cache: cache,
-		})
+
+		let algorithm = if block_number >= progpow_transition {
+			Algorithm::Progpow(Box::new(generate_cdag(cache.as_ref())))
+		} else {
+			Algorithm::Hashimoto
+		};
+
+		Ok(Light { block_number, cache, algorithm })
 	}
 
 	pub fn to_file(&mut self) -> io::Result<&Path> {
@@ -118,31 +147,29 @@ pub fn quick_get_progpow_difficulty(header_hash: &H256, nonce: u64, mix_hash: &H
 /// `nonce`            The block's nonce
 /// `mix_hash`         The mix digest hash
 /// Boundary recovered from mix hash
-pub fn quick_get_difficulty(block_number: u64, header_hash: &H256, nonce: u64,
- mix_hash: &H256) -> H256 {
-	if block_number > PROGPOW_START {
-		return quick_get_progpow_difficulty(header_hash, nonce, mix_hash)
-	}
+pub fn quick_get_difficulty(header_hash: &H256, nonce: u64, mix_hash: &H256, progpow: bool) -> H256 {
 	unsafe {
-		// This is safe - the `keccak_512` call below reads the first 40 bytes (which we explicitly set
-		// with two `copy_nonoverlapping` calls) but writes the first 64, and then we explicitly write
-		// the next 32 bytes before we read the whole thing with `keccak_256`.
-		//
-		// This cannot be elided by the compiler as it doesn't know the implementation of
-		// `keccak_512`.
-		let mut buf: [u8; 64 + 32] = mem::uninitialized();
+		if progpow {
+	//TODO if block_number > PROGPOW_START {
+	//	return quick_get_progpow_difficulty(header_hash, nonce, mix_hash)
+	//}
+			let seed = keccak_f800_short(*header_hash, nonce, [0u32; 8]);
+			keccak_f800_long(*header_hash, seed, mem::transmute(*mix_hash))
+		} else {
+			let mut buf = [0u8; 64 + 32];
 
-		ptr::copy_nonoverlapping(header_hash.as_ptr(), buf.as_mut_ptr(), 32);
-		ptr::copy_nonoverlapping(&nonce as *const u64 as *const u8, buf[32..].as_mut_ptr(), 8);
+			let hash_len = header_hash.len();
+			buf[..hash_len].copy_from_slice(header_hash);
+			buf[hash_len..hash_len + mem::size_of::<u64>()].copy_from_slice(&nonce.to_ne_bytes());
 
-		keccak_512::unchecked(buf.as_mut_ptr(), 64, buf.as_ptr(), 40);
-		ptr::copy_nonoverlapping(mix_hash.as_ptr(), buf[64..].as_mut_ptr(), 32);
+			keccak_512::unchecked(buf.as_mut_ptr(), 64, buf.as_ptr(), 40);
+			buf[64..].copy_from_slice(mix_hash);
 
-		// This is initialized in `keccak_256`
-		let mut hash: [u8; 32] = mem::uninitialized();
-		keccak_256::unchecked(hash.as_mut_ptr(), hash.len(), buf.as_ptr(), buf.len());
+			let mut hash = [0u8; 32];
+			keccak_256::unchecked(hash.as_mut_ptr(), hash.len(), buf.as_ptr(), buf.len());
 
-		hash
+			hash
+		}
 	}
 }
 
@@ -210,17 +237,11 @@ fn hash_compute(light: &Light, full_size: usize, header_hash: &H256, nonce: u64)
 	let mut buf: MixBuf = MixBuf {
 		half_mix: unsafe {
 			// Pack `header_hash` and `nonce` together
-			// We explicitly write the first 40 bytes, leaving the last 24 as uninitialized. Then
-			// `keccak_512` reads the first 40 bytes (4th parameter) and overwrites the entire array,
-			// leaving it fully initialized.
-			let mut out: [u8; NODE_BYTES] = mem::uninitialized();
+			let mut out = [0u8; NODE_BYTES];
 
-			ptr::copy_nonoverlapping(header_hash.as_ptr(), out.as_mut_ptr(), header_hash.len());
-			ptr::copy_nonoverlapping(
-				&nonce as *const u64 as *const u8,
-				out[header_hash.len()..].as_mut_ptr(),
-				mem::size_of::<u64>(),
-			);
+			let hash_len = header_hash.len();
+			out[..hash_len].copy_from_slice(header_hash);
+			out[hash_len..hash_len + mem::size_of::<u64>()].copy_from_slice(&nonce.to_ne_bytes());
 
 			// compute keccak-512 hash and replicate across mix
 			keccak_512::unchecked(
@@ -232,8 +253,7 @@ fn hash_compute(light: &Light, full_size: usize, header_hash: &H256, nonce: u64)
 
 			Node { bytes: out }
 		},
-		// This is fully initialized before being read, see `let mut compress = ...` below
-		compress_bytes: unsafe { mem::uninitialized() },
+		compress_bytes: [0u8; MIX_WORDS],
 	};
 
 	let mut mix: [_; MIX_NODES] = [buf.half_mix.clone(), buf.half_mix.clone()];
@@ -257,24 +277,16 @@ fn hash_compute(light: &Light, full_size: usize, header_hash: &H256, nonce: u64)
 			fnv_hash(first_val ^ i, mix_words[i as usize % MIX_WORDS]) % num_full_pages
 		};
 
-		unroll! {
-			// MIX_NODES
-			for n in 0..2 {
-				let tmp_node = calculate_dag_item(
-					index * MIX_NODES as u32 + n as u32,
-					cache,
-				);
+		// MIX_NODES
+		for n in 0..2 {
+			let tmp_node = calculate_dag_item(
+				index * MIX_NODES as u32 + n as u32,
+				cache,
+			);
 
-				unroll! {
-					// NODE_WORDS
-					for w in 0..16 {
-						mix[n].as_words_mut()[w] =
-							fnv_hash(
-								mix[n].as_words()[w],
-								tmp_node.as_words()[w],
-							);
-					}
-				}
+			// NODE_WORDS
+			for (a, b) in mix[n].as_words_mut().iter_mut().zip(tmp_node.as_words()) {
+				*a = fnv_hash(*a, *b);
 			}
 		}
 	}
@@ -282,25 +294,27 @@ fn hash_compute(light: &Light, full_size: usize, header_hash: &H256, nonce: u64)
 	let mix_words: [u32; MIX_WORDS] = unsafe { mem::transmute(mix) };
 
 	{
-		// This is an uninitialized buffer to begin with, but we iterate precisely `compress.len()`
-		// times and set each index, leaving the array fully initialized. THIS ONLY WORKS ON LITTLE-
-		// ENDIAN MACHINES. See a future PR to make this and the rest of the code work correctly on
+		// We iterate precisely `compress.len()` times and set each index,
+		// leaving the array fully initialized. THIS ONLY WORKS ON LITTLE-ENDIAN MACHINES.
+		// See a future PR to make this and the rest of the code work correctly on
 		// big-endian arches like mips.
 		let compress: &mut [u32; MIX_WORDS / 4] =
 			unsafe { make_const_array!(MIX_WORDS / 4, &mut buf.compress_bytes) };
+		#[cfg(target_endian = "big")]
+		{
+			compile_error!("parity-ethereum currently only supports little-endian targets");
+		}
 
 		// Compress mix
 		debug_assert_eq!(MIX_WORDS / 4, 8);
-		unroll! {
-			for i in 0..8 {
-				let w = i * 4;
+		for i in 0..8 {
+			let w = i * 4;
 
-				let mut reduction = mix_words[w + 0];
-				reduction = reduction.wrapping_mul(FNV_PRIME) ^ mix_words[w + 1];
-				reduction = reduction.wrapping_mul(FNV_PRIME) ^ mix_words[w + 2];
-				reduction = reduction.wrapping_mul(FNV_PRIME) ^ mix_words[w + 3];
-				compress[i] = reduction;
-			}
+			let mut reduction = mix_words[w + 0];
+			reduction = reduction.wrapping_mul(FNV_PRIME) ^ mix_words[w + 1];
+			reduction = reduction.wrapping_mul(FNV_PRIME) ^ mix_words[w + 2];
+			reduction = reduction.wrapping_mul(FNV_PRIME) ^ mix_words[w + 3];
+			compress[i] = reduction;
 		}
 	}
 
@@ -312,7 +326,7 @@ fn hash_compute(light: &Light, full_size: usize, header_hash: &H256, nonce: u64)
 		// We overwrite the second half since `keccak_256` has an internal buffer and so allows
 		// overlapping arrays as input.
 		let write_ptr: *mut u8 = &mut buf.compress_bytes as *mut [u8; 32] as *mut u8;
-		unsafe { 
+		unsafe {
 			keccak_256::unchecked(
 				write_ptr,
 				buf.compress_bytes.len(),
@@ -326,8 +340,7 @@ fn hash_compute(light: &Light, full_size: usize, header_hash: &H256, nonce: u64)
 	ProofOfWork { mix_hash: mix_hash, value: value }
 }
 
-// TODO: Use the `simd` crate
-fn calculate_dag_item(node_index: u32, cache: &[Node]) -> Node {
+pub fn calculate_dag_item(node_index: u32, cache: &[Node]) -> Node {
 	let num_parent_nodes = cache.len();
 	let mut ret = cache[node_index as usize % num_parent_nodes].clone();
 	ret.as_words_mut()[0] ^= node_index;
@@ -340,10 +353,8 @@ fn calculate_dag_item(node_index: u32, cache: &[Node]) -> Node {
 			num_parent_nodes as u32;
 		let parent = &cache[parent_index as usize];
 
-		unroll! {
-			for w in 0..16 {
-				ret.as_words_mut()[w] = fnv_hash(ret.as_words()[w], parent.as_words()[w]);
-			}
+		for (a, b) in ret.as_words_mut().iter_mut().zip(parent.as_words()) {
+			*a = fnv_hash(*a, *b);
 		}
 	}
 
@@ -401,13 +412,13 @@ mod test {
 			0x4a, 0x8e, 0x95, 0x69, 0xef, 0xc7, 0xd7, 0x1b, 0x33, 0x35, 0xdf, 0x36, 0x8c, 0x9a,
 			0xe9, 0x7e, 0x53, 0x84,
 		];
-		assert_eq!(quick_get_difficulty(&hash, nonce, &mix_hash)[..], boundary_good[..]);
+		assert_eq!(quick_get_difficulty(&hash, nonce, &mix_hash, false)[..], boundary_good[..]);
 		let boundary_bad = [
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x3a, 0x9b, 0x6c, 0x69, 0xbc, 0x2c, 0xe2, 0xa2,
 			0x4a, 0x8e, 0x95, 0x69, 0xef, 0xc7, 0xd7, 0x1b, 0x33, 0x35, 0xdf, 0x36, 0x8c, 0x9a,
 			0xe9, 0x7e, 0x53, 0x84,
 		];
-		assert!(quick_get_difficulty(&hash, nonce, &mix_hash)[..] != boundary_bad[..]);
+		assert!(quick_get_difficulty(&hash, nonce, &mix_hash, false)[..] != boundary_bad[..]);
 	}
 
 	#[test]
@@ -431,7 +442,7 @@ mod test {
 
 		let tempdir = TempDir::new("").unwrap();
 		// difficulty = 0x085657254bd9u64;
-		let light = NodeCacheBuilder::new(None).light(tempdir.path(), 486382);
+		let light = NodeCacheBuilder::new(None, u64::max_value()).light(tempdir.path(), 486382);
 		let result = light_compute(&light, &hash, nonce);
 		assert_eq!(result.mix_hash[..], mix_hash[..]);
 		assert_eq!(result.value[..], boundary[..]);
@@ -440,7 +451,7 @@ mod test {
 	#[test]
 	fn test_drop_old_data() {
 		let tempdir = TempDir::new("").unwrap();
-		let builder = NodeCacheBuilder::new(None);
+		let builder = NodeCacheBuilder::new(None, u64::max_value());
 		let first = builder.light(tempdir.path(), 0).to_file().unwrap().to_owned();
 
 		let second = builder.light(tempdir.path(), ETHASH_EPOCH_LENGTH).to_file().unwrap().to_owned();

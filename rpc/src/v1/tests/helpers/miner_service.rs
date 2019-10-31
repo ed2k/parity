@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Test implementation of miner service.
 
@@ -20,22 +20,26 @@ use std::sync::Arc;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use bytes::Bytes;
-use ethcore::account_provider::SignError as AccountError;
-use ethcore::block::{Block, SealedBlock, IsBlock};
-use ethcore::client::{Nonce, PrepareOpenBlock, StateClient, EngineInfo};
-use ethcore::engines::EthEngine;
-use ethcore::error::Error;
-use ethcore::header::{BlockNumber, Header};
-use ethcore::ids::BlockId;
-use ethcore::miner::{self, MinerService, AuthoringParams};
-use ethcore::receipt::RichReceipt;
+use client_traits::{Nonce, StateClient};
+use engine::{Engine, signer::EngineSigner};
+use ethcore::block::SealedBlock;
+use ethcore::client::{PrepareOpenBlock, EngineInfo};
+use ethcore::miner::{self, MinerService, AuthoringParams, FilterOptions};
+use ethcore::test_helpers::TestState;
 use ethereum_types::{H256, U256, Address};
 use miner::pool::local_transactions::Status as LocalTransactionStatus;
 use miner::pool::{verifier, VerifiedTransaction, QueueStatus};
 use parking_lot::{RwLock, Mutex};
-use transaction::{self, UnverifiedTransaction, SignedTransaction, PendingTransaction};
 use txpool;
-use ethkey::Password;
+use types::{
+	BlockNumber,
+	block::Block,
+	header::Header,
+	errors::EthcoreError as Error,
+	ids::BlockId,
+	receipt::RichReceipt,
+	transaction::{self, UnverifiedTransaction, SignedTransaction, PendingTransaction},
+};
 
 /// Test miner service.
 pub struct TestMinerService {
@@ -49,8 +53,10 @@ pub struct TestMinerService {
 	pub pending_receipts: Mutex<Vec<RichReceipt>>,
 	/// Next nonces.
 	pub next_nonces: RwLock<HashMap<Address, U256>>,
-	/// Password held by Engine.
-	pub password: RwLock<Password>,
+	/// Minimum gas price
+	pub min_gas_price: RwLock<Option<U256>>,
+	/// Signer (if any)
+	pub signer: RwLock<Option<Box<dyn EngineSigner>>>,
 
 	authoring_params: RwLock<AuthoringParams>,
 }
@@ -63,12 +69,13 @@ impl Default for TestMinerService {
 			local_transactions: Default::default(),
 			pending_receipts: Default::default(),
 			next_nonces: Default::default(),
-			password: RwLock::new("".into()),
+			min_gas_price: RwLock::new(Some(0.into())),
 			authoring_params: RwLock::new(AuthoringParams {
 				author: Address::zero(),
 				gas_range_target: (12345.into(), 54321.into()),
 				extra_data: vec![1, 2, 3, 4],
 			}),
+			signer: RwLock::new(None),
 		}
 	}
 }
@@ -84,25 +91,25 @@ impl TestMinerService {
 
 impl StateClient for TestMinerService {
 	// State will not be used by test client anyway, since all methods that accept state are mocked
-	type State = ();
+	type State = TestState;
 
-	fn latest_state(&self) -> Self::State {
-		()
+	fn latest_state_and_header(&self) -> (Self::State, Header) {
+		(TestState, Header::default())
 	}
 
 	fn state_at(&self, _id: BlockId) -> Option<Self::State> {
-		Some(())
+		Some(TestState)
 	}
 }
 
 impl EngineInfo for TestMinerService {
-	fn engine(&self) -> &EthEngine {
+	fn engine(&self) -> &dyn Engine {
 		unimplemented!()
 	}
 }
 
 impl MinerService for TestMinerService {
-	type State = ();
+	type State = TestState;
 
 	fn pending_state(&self, _latest_block_number: BlockNumber) -> Option<Self::State> {
 		None
@@ -120,12 +127,14 @@ impl MinerService for TestMinerService {
 		self.authoring_params.read().clone()
 	}
 
-	fn set_author(&self, author: Address, password: Option<Password>) -> Result<(), AccountError> {
-		self.authoring_params.write().author = author;
-		if let Some(password) = password {
-			*self.password.write() = password;
+	fn set_author<T: Into<Option<miner::Author>>>(&self, author: T) {
+		let author_opt = author.into();
+		self.authoring_params.write().author = author_opt.as_ref().map(miner::Author::address).unwrap_or_default();
+		match author_opt {
+			Some(miner::Author::Sealer(signer)) => *self.signer.write() = Some(signer),
+			Some(miner::Author::External(_addr)) => (),
+			None => *self.signer.write() = None,
 		}
-		Ok(())
 	}
 
 	fn set_extra_data(&self, extra_data: Bytes) {
@@ -191,7 +200,7 @@ impl MinerService for TestMinerService {
 		let params = self.authoring_params();
 		let open_block = chain.prepare_open_block(params.author, params.gas_range_target, params.extra_data).unwrap();
 		let closed = open_block.close().unwrap();
-		let header = closed.header();
+		let header = &closed.header;
 
 		Some((header.hash(), header.number(), header.timestamp(), *header.difficulty()))
 	}
@@ -217,6 +226,10 @@ impl MinerService for TestMinerService {
 	}
 
 	fn ready_transactions<C>(&self, _chain: &C, _max_len: usize, _ordering: miner::PendingOrdering) -> Vec<Arc<VerifiedTransaction>> {
+		self.queued_transactions()
+	}
+
+	fn ready_transactions_filtered<C>(&self, _chain: &C, _max_len: usize, _filter: Option<FilterOptions>, _ordering: miner::PendingOrdering) -> Vec<Arc<VerifiedTransaction>> {
 		self.queued_transactions()
 	}
 
@@ -279,5 +292,19 @@ impl MinerService for TestMinerService {
 
 	fn sensible_gas_limit(&self) -> U256 {
 		0x5208.into()
+	}
+
+	fn set_minimal_gas_price(&self, gas_price: U256) -> Result<bool, &str> {
+		let mut new_price = self.min_gas_price.write();
+		match *new_price {
+			Some(ref mut v) => {
+				*v = gas_price;
+				Ok(true)
+			},
+			None => {
+				let error_msg = "Can't update fixed gas price while automatic gas calibration is enabled.";
+				Err(error_msg)
+			},
+		}
 	}
 }

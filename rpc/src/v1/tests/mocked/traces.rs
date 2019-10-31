@@ -1,26 +1,28 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::sync::Arc;
 
-use ethcore::executed::{Executed, CallError};
-use ethcore::trace::trace::{Action, Res, Call};
-use ethcore::trace::LocalizedTrace;
-use ethcore::client::TestBlockChainClient;
+use machine::executed::Executed;
+use trace::trace::{Action, Res, Call};
+use trace::LocalizedTrace;
+use ethcore::test_helpers::TestBlockChainClient;
+use ethereum_types::{Address, H256};
 
+use types::transaction::CallError;
 use vm::CallType;
 
 use jsonrpc_core::IoHandler;
@@ -37,8 +39,8 @@ fn io() -> Tester {
 	let client = Arc::new(TestBlockChainClient::new());
 	*client.traces.write() = Some(vec![LocalizedTrace {
 		action: Action::Call(Call {
-			from: 0xf.into(),
-			to: 0x10.into(),
+			from: Address::from_low_u64_be(0xf),
+			to: Address::from_low_u64_be(0x10),
 			value: 0x1.into(),
 			gas: 0x100.into(),
 			input: vec![1, 2, 3],
@@ -48,9 +50,9 @@ fn io() -> Tester {
 		subtraces: 0,
 		trace_address: vec![0],
 		transaction_number: Some(0),
-		transaction_hash: Some(5.into()),
+		transaction_hash: Some(H256::from_low_u64_be(5)),
 		block_number: 10,
-		block_hash: 10.into(),
+		block_hash: H256::from_low_u64_be(10),
 	}]);
 	*client.execution_result.write() = Some(Ok(Executed {
 		exception: None,

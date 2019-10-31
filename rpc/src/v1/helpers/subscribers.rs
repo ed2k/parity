@@ -1,26 +1,26 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! A map of subscribers.
 
 use std::{ops, str};
 use std::collections::HashMap;
-use jsonrpc_macros::pubsub::{Subscriber, Sink, SubscriptionId};
-use rand::{Rng, StdRng};
-use v1::types::H64;
+
+use jsonrpc_pubsub::{typed::{Subscriber, Sink}, SubscriptionId};
+use ethereum_types::H64;
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct Id(H64);
@@ -36,39 +36,50 @@ impl str::FromStr for Id {
 	}
 }
 impl Id {
+	// TODO: replace `format!` see [#10412](https://github.com/paritytech/parity-ethereum/issues/10412)
 	pub fn as_string(&self) -> String {
-		format!("0x{:?}", self.0)
+		format!("{:?}", self.0)
 	}
 }
 
-#[derive(Clone)]
+#[cfg(not(test))]
+mod random {
+	use rand::rngs::OsRng;
+
+	pub type Rng = rand::rngs::OsRng;
+
+	pub fn new() -> Rng { OsRng }
+}
+
+#[cfg(test)]
+mod random {
+	use rand::SeedableRng;
+	use rand_xorshift::XorShiftRng;
+
+	const RNG_SEED: [u8; 16] = [0u8; 16];
+
+	pub type Rng = XorShiftRng;
+
+	pub fn new() -> Rng { Rng::from_seed(RNG_SEED) }
+}
+
 pub struct Subscribers<T> {
-	rand: StdRng,
+	rand: random::Rng,
 	subscriptions: HashMap<Id, T>,
 }
 
 impl<T> Default for Subscribers<T> {
 	fn default() -> Self {
 		Subscribers {
-			rand: StdRng::new().expect("Valid random source is required."),
+			rand: random::new(),
 			subscriptions: HashMap::new(),
 		}
 	}
 }
 
 impl<T> Subscribers<T> {
-	/// Create a new Subscribers with given random source.
-	#[cfg(test)]
-	pub fn new_test() -> Self {
-		Subscribers {
-			rand: ::rand::SeedableRng::from_seed([0usize].as_ref()),
-			subscriptions: HashMap::new(),
-		}
-	}
-
 	fn next_id(&mut self) -> Id {
-		let mut data = H64::default();
-		self.rand.fill_bytes(&mut data.0);
+		let data = H64::random_using(&mut self.rand);
 		Id(data)
 	}
 

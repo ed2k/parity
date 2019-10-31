@@ -1,49 +1,49 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! rpc integration tests.
-use std::env;
-use std::sync::Arc;
 
-use ethereum_types::{H256, Address};
-use ethcore::account_provider::AccountProvider;
-use ethcore::client::{BlockChainClient, Client, ClientConfig, ChainInfo, ImportBlock};
-use ethcore::ethereum;
-use ethcore::ids::BlockId;
+use std::{env, sync::Arc};
+
+use accounts::AccountProvider;
+use client_traits::{BlockChainClient, ChainInfo, ImportBlock};
+use ethcore::client::{Client, ClientConfig};
 use ethcore::miner::Miner;
-use ethcore::spec::{Genesis, Spec};
+use spec::{Genesis, Spec, self};
 use ethcore::test_helpers;
-use ethcore::verification::queue::kind::blocks::Unverified;
-use ethcore::verification::VerifierType;
-use ethjson::blockchain::BlockChain;
+use verification::VerifierType;
+use ethereum_types::{Address, H256, U256};
+use ethjson::test_helpers::blockchain::BlockChain;
 use ethjson::spec::ForkSpec;
 use io::IoChannel;
 use miner::external::ExternalMiner;
-use parking_lot::Mutex;
 use parity_runtime::Runtime;
+use parking_lot::Mutex;
+use types::{
+	ids::BlockId,
+	verification::Unverified,
+};
 
 use jsonrpc_core::IoHandler;
-use v1::helpers::dispatch::FullDispatcher;
+use v1::helpers::dispatch::{self, FullDispatcher};
 use v1::helpers::nonce;
 use v1::impls::{EthClient, EthClientOptions, SigningUnsafeClient};
 use v1::metadata::Metadata;
 use v1::tests::helpers::{TestSnapshotService, TestSyncProvider, Config};
-use v1::traits::eth::Eth;
-use v1::traits::eth_signing::EthSigning;
-use v1::types::U256 as NU256;
+use v1::traits::{Eth, EthSigning};
 
 fn account_provider() -> Arc<AccountProvider> {
 	Arc::new(AccountProvider::transient_provider())
@@ -56,8 +56,8 @@ fn sync_provider() -> Arc<TestSyncProvider> {
 	}))
 }
 
-fn miner_service(spec: &Spec, accounts: Arc<AccountProvider>) -> Arc<Miner> {
-	Arc::new(Miner::new_for_tests(spec, Some(accounts)))
+fn miner_service(spec: &Spec) -> Arc<Miner> {
+	Arc::new(Miner::new_for_tests(spec, None))
 }
 
 fn snapshot_service() -> Arc<TestSnapshotService> {
@@ -66,27 +66,26 @@ fn snapshot_service() -> Arc<TestSnapshotService> {
 
 fn make_spec(chain: &BlockChain) -> Spec {
 	let genesis = Genesis::from(chain.genesis());
-	let mut spec = ethereum::new_frontier_test();
+	let mut spec = spec::new_frontier_test();
 	let state = chain.pre_state.clone().into();
 	spec.set_genesis_state(state).expect("unable to set genesis state");
 	spec.overwrite_genesis_params(genesis);
-	assert!(spec.is_state_root_valid());
 	spec
 }
 
 struct EthTester {
-	_runtime: Runtime,
-	client: Arc<Client>,
 	_miner: Arc<Miner>,
+	_runtime: Runtime,
 	_snapshot: Arc<TestSnapshotService>,
 	accounts: Arc<AccountProvider>,
+	client: Arc<Client>,
 	handler: IoHandler<Metadata>,
 }
 
 impl EthTester {
 	fn from_chain(chain: &BlockChain) -> Self {
 
-		let tester = if ::ethjson::blockchain::Engine::NoProof == chain.engine {
+		let tester = if ethjson::test_helpers::blockchain::Engine::NoProof == chain.engine {
 			let mut config = ClientConfig::default();
 			config.verifier_type = VerifierType::CanonNoSeal;
 			config.check_seal = false;
@@ -95,12 +94,10 @@ impl EthTester {
 			Self::from_spec(make_spec(chain))
 		};
 
-
 		for b in chain.blocks_rlp() {
 			if let Ok(block) = Unverified::from_rlp(b) {
 				let _ = tester.client.import_block(block);
 				tester.client.flush_queue();
-				tester.client.import_verified_blocks();
 			}
 		}
 
@@ -116,11 +113,11 @@ impl EthTester {
 	}
 
 	fn from_spec_conf(spec: Spec, config: ClientConfig) -> Self {
-
 		let runtime = Runtime::with_thread_count(1);
 		let account_provider = account_provider();
-		let opt_account_provider = account_provider.clone();
-		let miner_service = miner_service(&spec, account_provider.clone());
+		let ap = account_provider.clone();
+		let accounts = Arc::new(move || ap.accounts().unwrap_or_default()) as _;
+		let miner_service = miner_service(&spec);
 		let snapshot_service = snapshot_service();
 
 		let client = Client::new(
@@ -137,7 +134,7 @@ impl EthTester {
 			&client,
 			&snapshot_service,
 			&sync_provider,
-			&opt_account_provider,
+			&accounts,
 			&miner_service,
 			&external_miner,
 			EthClientOptions {
@@ -146,15 +143,17 @@ impl EthTester {
 				send_block_number_in_get_work: true,
 				gas_price_percentile: 50,
 				allow_experimental_rpcs: true,
-				allow_missing_blocks: false
+				allow_missing_blocks: false,
+				no_ancient_blocks: false
 			},
 		);
 
 		let reservations = Arc::new(Mutex::new(nonce::Reservations::new(runtime.executor())));
 
 		let dispatcher = FullDispatcher::new(client.clone(), miner_service.clone(), reservations, 50);
+		let signer = Arc::new(dispatch::Signer::new(account_provider.clone())) as _;
 		let eth_sign = SigningUnsafeClient::new(
-			&opt_account_provider,
+			&signer,
 			dispatcher,
 		);
 
@@ -163,11 +162,11 @@ impl EthTester {
 		handler.extend_with(eth_sign.to_delegate());
 
 		EthTester {
-			_runtime: runtime,
 			_miner: miner_service,
+			_runtime: runtime,
 			_snapshot: snapshot_service,
-			client: client,
 			accounts: account_provider,
+			client: client,
 			handler: handler,
 		}
 	}
@@ -175,13 +174,13 @@ impl EthTester {
 
 #[test]
 fn harness_works() {
-	let chain: BlockChain = extract_chain!("BlockchainTests/bcWalletTest/wallet2outOf3txs");
+	let chain: BlockChain = extract_chain!("BlockchainTests/ValidBlocks/bcWalletTest/wallet2outOf3txs");
 	let _ = EthTester::from_chain(&chain);
 }
 
 #[test]
 fn eth_get_balance() {
-	let chain = extract_chain!("BlockchainTests/bcWalletTest/wallet2outOf3txs");
+	let chain = extract_chain!("BlockchainTests/ValidBlocks/bcWalletTest/wallet2outOf3txs");
 	let tester = EthTester::from_chain(&chain);
 	// final account state
 	let req_latest = r#"{
@@ -207,7 +206,7 @@ fn eth_get_balance() {
 
 #[test]
 fn eth_get_proof() {
-	let chain = extract_chain!("BlockchainTests/bcWalletTest/wallet2outOf3txs");
+	let chain = extract_chain!("BlockchainTests/ValidBlocks/bcWalletTest/wallet2outOf3txs");
 	let tester = EthTester::from_chain(&chain);
 	// final account state
 	let req_latest = r#"{
@@ -218,8 +217,7 @@ fn eth_get_proof() {
 	}"#;
 
 	let res_latest = r#","address":"0xaaaf5374fce5edbc8e2a8697c15331677e6ebaaa","balance":"0x9","codeHash":"0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470","nonce":"0x0","storageHash":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","storageProof":[]},"id":1}"#.to_owned();
-    assert!(tester.handler.handle_request_sync(req_latest).unwrap().to_string().ends_with(res_latest.as_str()));
-
+	assert!(tester.handler.handle_request_sync(req_latest).unwrap().to_string().ends_with(res_latest.as_str()));
 	// non-existant account
 	let req_new_acc = r#"{
 		"jsonrpc": "2.0",
@@ -229,12 +227,12 @@ fn eth_get_proof() {
 	}"#;
 
 	let res_new_acc = r#","address":"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","balance":"0x0","codeHash":"0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470","nonce":"0x0","storageHash":"0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421","storageProof":[]},"id":3}"#.to_owned();
-    assert!(tester.handler.handle_request_sync(req_new_acc).unwrap().to_string().ends_with(res_new_acc.as_str()));
+	assert!(tester.handler.handle_request_sync(req_new_acc).unwrap().to_string().ends_with(res_new_acc.as_str()));
 }
 
 #[test]
 fn eth_block_number() {
-	let chain = extract_chain!("BlockchainTests/bcGasPricerTest/RPC_API_Test");
+	let chain = extract_chain!("BlockchainTests/ValidBlocks/bcGasPricerTest/RPC_API_Test");
 	let tester = EthTester::from_chain(&chain);
 	let req_number = r#"{
 		"jsonrpc": "2.0",
@@ -249,7 +247,7 @@ fn eth_block_number() {
 
 #[test]
 fn eth_get_block() {
-	let chain = extract_chain!("BlockchainTests/bcGasPricerTest/RPC_API_Test");
+	let chain = extract_chain!("BlockchainTests/ValidBlocks/bcGasPricerTest/RPC_API_Test");
 	let tester = EthTester::from_chain(&chain);
 	let req_block = r#"{"method":"eth_getBlockByNumber","params":["0x0",false],"id":1,"jsonrpc":"2.0"}"#;
 
@@ -259,13 +257,13 @@ fn eth_get_block() {
 
 #[test]
 fn eth_get_block_by_hash() {
-	let chain = extract_chain!("BlockchainTests/bcGasPricerTest/RPC_API_Test");
+	let chain = extract_chain!("BlockchainTests/ValidBlocks/bcGasPricerTest/RPC_API_Test");
 	let tester = EthTester::from_chain(&chain);
 
 	// We're looking for block number 4 from "RPC_API_Test_Frontier"
-	let req_block = r#"{"method":"eth_getBlockByHash","params":["0xaddb9e39795e9e041c936b88a2577802569f34afded0948707b074caa3163a87",false],"id":1,"jsonrpc":"2.0"}"#;
+	let req_block = r#"{"method":"eth_getBlockByHash","params":["0x75e65fb3bbf5f53afe26dcc72df6a95b0e8ca5f1c450145d8c3915bd0308b75b",false],"id":1,"jsonrpc":"2.0"}"#;
 
-	let res_block = r#"{"jsonrpc":"2.0","result":{"author":"0x8888f1f195afa192cfee860698584c030f4c9db1","difficulty":"0x20080","extraData":"0x","gasLimit":"0x1dd7ea0","gasUsed":"0x5458","hash":"0xaddb9e39795e9e041c936b88a2577802569f34afded0948707b074caa3163a87","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","miner":"0x8888f1f195afa192cfee860698584c030f4c9db1","mixHash":"0x713b0b31f6e72d8cb7367eaf59447ea531f209fc80e6379edd9f8d3bb73931c4","nonce":"0x4534b406bc23b86d","number":"0x4","parentHash":"0x17567aa5995b703736e32972289d68af50543acc4d56d37e8ad1fea7252cac4a","receiptsRoot":"0x7ed8026cf72ed0e98e6fd53ab406e51ffd34397d9da0052494ff41376fda7b5f","sealFields":["0xa0713b0b31f6e72d8cb7367eaf59447ea531f209fc80e6379edd9f8d3bb73931c4","0x884534b406bc23b86d"],"sha3Uncles":"0xe588a44b3e320e72e70b32b531f3ac0d432e756120135ae8fe5fa10895196b40","size":"0x661","stateRoot":"0x68805721294e365020aca15ed56c360d9dc2cf03cbeff84c9b84b8aed023bfb5","timestamp":"0x5bbdf772","totalDifficulty":"0xa00c0","transactions":["0xb094b9dc356dbb8b256402c6d5709288066ad6a372c90c9c516f14277545fd58"],"transactionsRoot":"0x97a593d8d7e15b57f5c6bb25bc6c325463ef99f874bc08a78656c3ab5cb23262","uncles":["0x86b48f5186c4b0882d3dca7977aa37840008832ef092f8ef797019dc74bfa8c7","0x2da9d062c11d536f0f1cc2a4e0111597c79926958d0fc26ae1a2d07d1a3bf47d"]},"id":1}"#;
+	let res_block = r#"{"jsonrpc":"2.0","result":{"author":"0x8888f1f195afa192cfee860698584c030f4c9db1","difficulty":"0x20000","extraData":"0x","gasLimit":"0x1dd7ea0","gasUsed":"0x5458","hash":"0x75e65fb3bbf5f53afe26dcc72df6a95b0e8ca5f1c450145d8c3915bd0308b75b","logsBloom":"0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","miner":"0x8888f1f195afa192cfee860698584c030f4c9db1","mixHash":"0x55553aaef7ee28e3aea539eb784e8cc26646911a19126c242ac682c3fcf22041","nonce":"0xca2904e50ca47ace","number":"0x4","parentHash":"0x58849f66c0ca60054468725cf173b72a2769807152c625aa02e71d67ab2eaed5","receiptsRoot":"0x7ed8026cf72ed0e98e6fd53ab406e51ffd34397d9da0052494ff41376fda7b5f","sealFields":["0xa055553aaef7ee28e3aea539eb784e8cc26646911a19126c242ac682c3fcf22041","0x88ca2904e50ca47ace"],"sha3Uncles":"0x0dbc9711185574f2eee337af18d08c0afe85490304c6bb16b443991b552c5e2c","size":"0x661","stateRoot":"0x68805721294e365020aca15ed56c360d9dc2cf03cbeff84c9b84b8aed023bfb5","timestamp":"0x5c477134","totalDifficulty":"0xa0000","transactions":["0xb094b9dc356dbb8b256402c6d5709288066ad6a372c90c9c516f14277545fd58"],"transactionsRoot":"0x97a593d8d7e15b57f5c6bb25bc6c325463ef99f874bc08a78656c3ab5cb23262","uncles":["0x51b0d7366382926a4f83191af19cb4aa894f6fd9bd1bda6c04de3d5af70eddba","0x9263e0be8311eb79db96171fad3fdd70317bbbdc4081ad6b04c60335db65a3bb"]},"id":1}"#;
 	assert_eq!(tester.handler.handle_request_sync(req_block).unwrap(), res_block);
 }
 
@@ -460,7 +458,7 @@ fn verify_transaction_counts(name: String, chain: BlockChain) {
 			"jsonrpc": "2.0",
 			"method": "eth_getBlockTransactionCountByNumber",
 			"params": [
-				"#.to_owned() + &::serde_json::to_string(&NU256::from(num)).unwrap() + r#"
+				"#.to_owned() + &::serde_json::to_string(&U256::from(num)).unwrap() + r#"
 			],
 			"id": "# + format!("{}", *id).as_ref() + r#"
 		}"#;
@@ -496,7 +494,7 @@ fn verify_transaction_counts(name: String, chain: BlockChain) {
 #[test]
 fn starting_nonce_test() {
 	let tester = EthTester::from_spec(Spec::load(&env::temp_dir(), POSITIVE_NONCE_SPEC).expect("invalid chain spec"));
-	let address = Address::from(10);
+	let address = Address::from_low_u64_be(10);
 
 	let sample = tester.handler.handle_request_sync(&(r#"
 		{
@@ -511,6 +509,6 @@ fn starting_nonce_test() {
 	assert_eq!(r#"{"jsonrpc":"2.0","result":"0x100","id":15}"#, &sample);
 }
 
-register_test!(eth_transaction_count_1, verify_transaction_counts, "BlockchainTests/bcWalletTest/wallet2outOf3txs");
-register_test!(eth_transaction_count_2, verify_transaction_counts, "BlockchainTests/bcTotalDifficultyTest/sideChainWithMoreTransactions");
-register_test!(eth_transaction_count_3, verify_transaction_counts, "BlockchainTests/bcGasPricerTest/RPC_API_Test");
+register_test!(eth_transaction_count_1, verify_transaction_counts, "BlockchainTests/ValidBlocks/bcWalletTest/wallet2outOf3txs");
+register_test!(eth_transaction_count_2, verify_transaction_counts, "BlockchainTests/ValidBlocks/bcTotalDifficultyTest/sideChainWithMoreTransactions");
+register_test!(eth_transaction_count_3, verify_transaction_counts, "BlockchainTests/ValidBlocks/bcGasPricerTest/RPC_API_Test");

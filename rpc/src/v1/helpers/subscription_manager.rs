@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Generic poll manager for Pub-Sub.
 
@@ -52,7 +52,7 @@ impl<S: core::Middleware<Metadata>> GenericPollManager<S> {
 	pub fn new(rpc: MetaIoHandler<Metadata, S>) -> Self {
 		GenericPollManager {
 			subscribers: Default::default(),
-			rpc: rpc,
+			rpc,
 		}
 	}
 
@@ -60,7 +60,7 @@ impl<S: core::Middleware<Metadata>> GenericPollManager<S> {
 	#[cfg(test)]
 	pub fn new_test(rpc: MetaIoHandler<Metadata, S>) -> Self {
 		let mut manager = Self::new(rpc);
-		manager.subscribers = Subscribers::new_test();
+		manager.subscribers = Subscribers::default();
 		manager
 	}
 
@@ -87,7 +87,7 @@ impl<S: core::Middleware<Metadata>> GenericPollManager<S> {
 		}).is_some()
 	}
 
-	pub fn tick(&self) -> Box<Future<Item=(), Error=()> + Send> {
+	pub fn tick(&self) -> Box<dyn Future<Item=(), Error=()> + Send> {
 		let mut futures = Vec::new();
 		// poll all subscriptions
 		for (id, subscription) in self.subscribers.iter() {
@@ -165,7 +165,7 @@ mod tests {
 		let mut el = Runtime::new().unwrap();
 		let mut poll_manager = poll_manager();
 		let (id, rx) = poll_manager.subscribe(Default::default(), "hello".into(), Params::None);
-		assert_eq!(id, SubscriptionId::String("0x416d77337e24399d".into()));
+		assert_eq!(id, SubscriptionId::String("0x43ca64edf03768e1".into()));
 
 		// then
 		poll_manager.tick().wait().unwrap();

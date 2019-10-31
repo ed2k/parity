@@ -1,40 +1,41 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::sync::{Arc, Weak};
 
-use ethcore::encoded;
-use ethcore::engines::{EthEngine, StateDependentProof};
-use ethcore::header::Header;
-use ethcore::machine::EthereumMachine;
-use ethcore::receipt::Receipt;
-use sync::LightSync;
+use engine::{Engine, StateDependentProof};
+use sync::{LightSync, LightNetworkDispatcher};
+use types::{
+	header::Header,
+	encoded,
+	receipt::Receipt,
+};
 
 use futures::{future, Future};
 use futures::future::Either;
 
 use light::client::fetch::ChainDataFetcher;
-use light::on_demand::{request, OnDemand};
+use light::on_demand::{request, OnDemand, OnDemandRequester};
 
 use parking_lot::RwLock;
 use ethereum_types::H256;
 
 const ALL_VALID_BACKREFS: &str = "no back-references, therefore all back-references valid; qed";
 
-type BoxFuture<T, E> = Box<Future<Item = T, Error = E>>;
+type BoxFuture<T, E> = Box<dyn Future<Item = T, Error = E>>;
 
 /// Allows on-demand fetch of data useful for the light client.
 pub struct EpochFetch {
@@ -82,7 +83,7 @@ impl ChainDataFetcher for EpochFetch {
 	}
 
 	/// Fetch epoch transition proof at given header.
-	fn epoch_transition(&self, hash: H256, engine: Arc<EthEngine>, checker: Arc<StateDependentProof<EthereumMachine>>)
+	fn epoch_transition(&self, hash: H256, engine: Arc<dyn Engine>, checker: Arc<dyn StateDependentProof>)
 		-> Self::Transition
 	{
 		self.request(request::Signal {

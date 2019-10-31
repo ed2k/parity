@@ -1,22 +1,22 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::sync::Arc;
 use hash::KECCAK_EMPTY;
-use heapsize::HeapSizeOf;
+use parity_util_mem::{MallocSizeOf, MallocSizeOfOps};
 use ethereum_types::H256;
 use parking_lot::Mutex;
 use memory_cache::MemoryLruCache;
@@ -25,11 +25,12 @@ use super::super::instructions::{self, Instruction};
 
 const DEFAULT_CACHE_SIZE: usize = 4 * 1024 * 1024;
 
-// stub for a HeapSizeOf implementation.
+/// Stub for a sharing `BitSet` data in cache (reference counted)
+/// and implementing MallocSizeOf on it.
 struct Bits(Arc<BitSet>);
 
-impl HeapSizeOf for Bits {
-	fn heap_size_of_children(&self) -> usize {
+impl MallocSizeOf for Bits {
+	fn size_of(&self, _ops: &mut MallocSizeOfOps) -> usize {
 		// dealing in bits here
 		self.0.capacity() * 8
 	}

@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Lenient bytes json deserialization for test json files.
 
@@ -34,9 +34,15 @@ impl Bytes {
 	}
 }
 
-impl Into<Vec<u8>> for Bytes {
-	fn into(self) -> Vec<u8> {
-		self.0
+impl From<Bytes> for Vec<u8> {
+	fn from(bytes: Bytes) -> Self {
+		bytes.0
+	}
+}
+
+impl From<Vec<u8>> for Bytes {
+	fn from(bytes: Vec<u8>) -> Self {
+		Bytes(bytes)
 	}
 }
 
@@ -57,10 +63,10 @@ impl FromStr for Bytes {
 			2 if value.starts_with("0x") => vec![],
 			_ if value.starts_with("0x") && value.len() % 2 == 1 => {
 				let v = "0".to_owned() + &value[2..];
-				FromHex::from_hex(v.as_str()).unwrap_or(vec![])
+				FromHex::from_hex(v.as_str()).unwrap_or_default()
 			},
-			_ if value.starts_with("0x") => FromHex::from_hex(&value[2..]).unwrap_or(vec![]),
-			_ => FromHex::from_hex(value).unwrap_or(vec![]),
+			_ if value.starts_with("0x") => FromHex::from_hex(&value[2..]).unwrap_or_default(),
+			_ => FromHex::from_hex(value).unwrap_or_default(),
 		};
 
 		Ok(Bytes(v))
@@ -94,8 +100,7 @@ impl<'a> Visitor<'a> for BytesVisitor {
 
 #[cfg(test)]
 mod test {
-	use serde_json;
-	use bytes::Bytes;
+	use super::Bytes;
 
 	#[test]
 	fn bytes_deserialization() {
@@ -112,8 +117,7 @@ mod test {
 
 	#[test]
 	fn bytes_into() {
-		let bytes = Bytes(vec![0xff, 0x11]);
-		let v: Vec<u8> = bytes.into();
+		let v: Vec<u8> = Bytes(vec![0xff, 0x11]).into();
 		assert_eq!(vec![0xff, 0x11], v);
 	}
 }

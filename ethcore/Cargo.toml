@@ -1,5 +1,5 @@
 [package]
-description = "Ethcore library"
+description = "Parity Ethereum (EthCore) Library"
 homepage = "http://parity.io"
 license = "GPL-3.0"
 name = "ethcore"
@@ -7,90 +7,101 @@ version = "1.12.0"
 authors = ["Parity Technologies <admin@parity.io>"]
 
 [dependencies]
-ansi_term = "0.10"
-blooms-db = { path = "../util/blooms-db" }
-bn = { git = "https://github.com/paritytech/bn", default-features = false }
-byteorder = "1.0"
-common-types = { path = "types" }
-crossbeam = "0.4"
-ethash = { path = "../ethash" }
-ethcore-bloom-journal = { path = "../util/bloom" }
-parity-bytes = "0.1"
-hashdb = "0.3.0"
-memorydb = "0.3.0"
-patricia-trie = "0.3.0"
-patricia-trie-ethereum = { path = "../util/patricia-trie-ethereum" }
-parity-crypto = "0.2"
-error-chain = { version = "0.12", default-features = false }
+account-state = { path = "account-state" }
+ansi_term = "0.11"
+basic-authority = { path = "./engines/basic-authority", optional = true} # used by test-helpers feature
+blooms-db = { path = "../util/blooms-db", optional = true }
+client-traits = { path = "./client-traits" }
+common-types = { path = "./types" }
+engine = { path = "./engine" }
+env_logger = { version = "0.5", optional = true }
+ethash = { path = "../ethash", optional = true }
+ethjson = { path = "../json", optional = true }
+ethcore-blockchain = { path = "./blockchain" }
+ethcore-call-contract = { path = "./call-contract" }
+ethcore-db = { path = "./db" }
 ethcore-io = { path = "../util/io" }
-ethcore-logger = { path = "../logger" }
 ethcore-miner = { path = "../miner" }
-ethcore-stratum = { path = "./stratum", optional = true }
-ethcore-transaction = { path = "./transaction" }
-ethereum-types = "0.4"
-memory-cache = { path = "../util/memory_cache" }
-ethabi = "6.0"
-ethabi-derive = "6.0"
-ethabi-contract = "6.0"
-ethjson = { path = "../json" }
-ethkey = { path = "../ethkey" }
-ethstore = { path = "../ethstore" }
+ethcore-stratum = { path = "../miner/stratum", optional = true }
+ethereum-types = "0.8.0"
 evm = { path = "evm" }
-heapsize = "0.4"
+executive-state = { path = "executive-state" }
+futures = "0.1"
+hash-db = "0.15.0"
 itertools = "0.5"
-lazy_static = "1.0"
-log = "0.4"
-lru-cache = "0.1"
-num = { version = "0.1", default-features = false, features = ["bigint"] }
-num_cpus = "1.2"
-parity-machine = { path = "../machine" }
-parking_lot = "0.7"
-rayon = "1.0"
-rand = "0.4"
-rlp = { version = "0.3.0", features = ["ethereum"] }
-rlp_compress = { path = "../util/rlp_compress" }
-rlp_derive = { path = "../util/rlp_derive" }
-kvdb = "0.1"
-kvdb-memorydb = "0.1"
-parity-snappy = "0.1"
-stop-guard = { path = "../util/stop-guard" }
-macros = { path = "../util/macros" }
-rustc-hex = "1.0"
-stats = { path = "../util/stats" }
-trace-time = "0.1"
-using_queue = { path = "../util/using_queue" }
-vm = { path = "vm" }
-wasm = { path = "wasm" }
-keccak-hash = "0.1"
-triehash-ethereum = { version = "0.2",  path = "../util/triehash-ethereum" }
-unexpected = { path = "../util/unexpected" }
 journaldb = { path = "../util/journaldb" }
-keccak-hasher = { path = "../util/keccak-hasher" }
-kvdb-rocksdb = "0.1.3"
+keccak-hash = "0.4.0"
+kvdb = "0.1"
+kvdb-memorydb = { version = "0.1.2", optional = true }
+kvdb-rocksdb = { version = "0.1.5", optional = true }
+lazy_static = { version = "1.3", optional = true }
+log = "0.4"
+macros = { path = "../util/macros", optional = true }
+machine = { path = "./machine" }
+memory-cache = { path = "../util/memory-cache" }
+parity-bytes = "0.1"
+parking_lot = "0.9"
+pod = { path = "pod", optional = true }
+trie-db = "0.15.0"
+parity-crypto = { version = "0.4.2", features = ["publickey"], optional = true }
+patricia-trie-ethereum = { path = "../util/patricia-trie-ethereum" }
+rand = "0.7"
+rand_xorshift = "0.2"
+rayon = "1.1"
+registrar = { path = "../util/registrar" }
+rlp = "0.4.0"
+rustc-hex = "2"
+scopeguard = "1.0.0"
 serde = "1.0"
 serde_derive = "1.0"
-tempdir = {version="0.3", optional = true}
-len-caching-lock = { path = "../util/len-caching-lock" }
-
-[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "windows", target_os = "android"))'.dependencies]
-hardware-wallet = { path = "../hw" }
-
-[target.'cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows", target_os = "android")))'.dependencies]
-fake-hardware-wallet = { path = "../util/fake-hardware-wallet" }
+snapshot = { path = "snapshot" }
+spec = { path = "spec" }
+state-db = { path = "state-db" }
+tempdir = { version = "0.3", optional = true }
+trace = { path = "trace" }
+trace-time = "0.1"
+trie-vm-factories = { path = "trie-vm-factories" }
+triehash-ethereum = { version = "0.2",  path = "../util/triehash-ethereum" }
+unexpected = { path = "../util/unexpected" }
+using_queue = { path = "../miner/using-queue" }
+verification = { path = "./verification" }
+vm = { path = "vm" }
 
 [dev-dependencies]
-env_logger = "0.4"
+account-db = { path = "account-db" }
+blooms-db = { path = "../util/blooms-db" }
+criterion = "0.3"
+engine = { path = "./engine", features = ["test-helpers"] }
+env_logger = "0.5"
+ethash = { path = "../ethash" }
+ethcore-accounts = { path = "../accounts" }
+ethcore-builtin = { path = "./builtin" }
+ethjson = { path = "../json", features = ["test-helpers"] }
+parity-crypto = { version = "0.4.2", features = ["publickey"] }
+fetch = { path = "../util/fetch" }
+kvdb-memorydb = "0.1.2"
+kvdb-rocksdb = "0.1.5"
+lazy_static = "1.3"
+machine = { path = "./machine", features = ["test-helpers"] }
+macros = { path = "../util/macros" }
+parity-runtime = { path = "../util/runtime" }
+serde_json = "1.0"
+stats = { path = "../util/stats" }
+pod = { path = "pod" }
 tempdir = "0.3"
-trie-standardmap = "0.1"
-criterion = "0.2"
+trie-standardmap = "0.15.0"
 
 [features]
-parity = ["work-notify", "price-info", "stratum"]
+parity = ["work-notify", "price-info", "stratum", "macros"]
 # Large optional features that are enabled by default for Parity,
 # but might be omitted for other dependent crates.
 work-notify = ["ethcore-miner/work-notify"]
 price-info = ["ethcore-miner/price-info"]
-stratum = ["ethcore-stratum"]
+stratum = [
+	"ethash",
+	"ethcore-stratum"
+]
+
 
 # Disables seal verification for mined blocks.
 # This allows you to submit any seal via RPC to test and benchmark
@@ -106,15 +117,22 @@ evm-debug-tests = ["evm-debug", "evm/evm-debug-tests"]
 # EVM debug traces are printed.
 slow-blocks = []
 # Run JSON consensus tests.
-json-tests = ["ethcore-transaction/json-tests", "test-helpers", "tempdir", "to-pod-full"]
-# Skip JSON consensus tests with pending issues.
-ci-skip-issue = []
+json-tests = ["env_logger", "test-helpers", "lazy_static", "machine/test-helpers"]
 # Run memory/cpu heavy tests.
 test-heavy = []
 # Compile test helpers
-test-helpers = ["tempdir"]
-# Enables slow 'to-pod-full' method for use in tests and evmbin.
-to-pod-full = []
+# note[dvdplm]: "basic-authority/test-helpers" is needed so that `generate_dummy_client_with_spec` works
+test-helpers = [
+    "blooms-db",
+    "ethjson/test-helpers",
+    "parity-crypto",
+    "kvdb-memorydb",
+    "kvdb-rocksdb",
+    "macros",
+    "pod",
+    "tempdir",
+    "basic-authority/test-helpers"
+ ]
 
 [[bench]]
 name = "builtin"

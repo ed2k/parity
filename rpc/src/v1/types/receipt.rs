@@ -1,21 +1,22 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
-use v1::types::{Log, H160, H256, H2048, U256, U64};
-use ethcore::receipt::{Receipt as EthReceipt, RichReceipt, LocalizedReceipt, TransactionOutcome};
+use ethereum_types::{H160, H256, U64, U256, Bloom as H2048};
+use v1::types::Log;
+use types::receipt::{Receipt as EthReceipt, RichReceipt, LocalizedReceipt, TransactionOutcome};
 
 /// Receipt
 #[derive(Debug, Serialize)]
@@ -42,12 +43,14 @@ pub struct Receipt {
 	/// Logs
 	pub logs: Vec<Log>,
 	/// State Root
-	#[serde(rename = "root")]
+	// NOTE(niklasad1): EIP98 makes this optional field, if it's missing then skip serializing it
+	#[serde(skip_serializing_if = "Option::is_none", rename = "root")]
 	pub state_root: Option<H256>,
 	/// Logs bloom
 	pub logs_bloom: H2048,
 	/// Status code
-	#[serde(rename = "status")]
+	// NOTE(niklasad1): Unknown after EIP98 rules, if it's missing then skip serializing it
+	#[serde(skip_serializing_if = "Option::is_none", rename = "status")]
 	pub status_code: Option<U64>,
 }
 
@@ -55,7 +58,7 @@ impl Receipt {
 	fn outcome_to_state_root(outcome: TransactionOutcome) -> Option<H256> {
 		match outcome {
 			TransactionOutcome::Unknown | TransactionOutcome::StatusCode(_) => None,
-			TransactionOutcome::StateRoot(root) => Some(root.into()),
+			TransactionOutcome::StateRoot(root) => Some(root),
 		}
 	}
 
@@ -71,18 +74,18 @@ impl From<LocalizedReceipt> for Receipt {
 	fn from(r: LocalizedReceipt) -> Self {
 		Receipt {
 			to: r.to.map(Into::into),
-			from: Some(r.from.into()),
-			transaction_hash: Some(r.transaction_hash.into()),
+			from: Some(r.from),
+			transaction_hash: Some(r.transaction_hash),
 			transaction_index: Some(r.transaction_index.into()),
-			block_hash: Some(r.block_hash.into()),
+			block_hash: Some(r.block_hash),
 			block_number: Some(r.block_number.into()),
-			cumulative_gas_used: r.cumulative_gas_used.into(),
-			gas_used: Some(r.gas_used.into()),
+			cumulative_gas_used: r.cumulative_gas_used,
+			gas_used: Some(r.gas_used),
 			contract_address: r.contract_address.map(Into::into),
 			logs: r.logs.into_iter().map(Into::into).collect(),
 			status_code: Self::outcome_to_status_code(&r.outcome),
 			state_root: Self::outcome_to_state_root(r.outcome),
-			logs_bloom: r.log_bloom.into(),
+			logs_bloom: r.log_bloom,
 		}
 	}
 }
@@ -90,19 +93,19 @@ impl From<LocalizedReceipt> for Receipt {
 impl From<RichReceipt> for Receipt {
 	fn from(r: RichReceipt) -> Self {
 		Receipt {
-			from: None,
-			to: None,
-			transaction_hash: Some(r.transaction_hash.into()),
+			from: Some(r.from),
+			to: r.to.map(Into::into),
+			transaction_hash: Some(r.transaction_hash),
 			transaction_index: Some(r.transaction_index.into()),
 			block_hash: None,
 			block_number: None,
-			cumulative_gas_used: r.cumulative_gas_used.into(),
-			gas_used: Some(r.gas_used.into()),
+			cumulative_gas_used: r.cumulative_gas_used,
+			gas_used: Some(r.gas_used),
 			contract_address: r.contract_address.map(Into::into),
 			logs: r.logs.into_iter().map(Into::into).collect(),
 			status_code: Self::outcome_to_status_code(&r.outcome),
 			state_root: Self::outcome_to_state_root(r.outcome),
-			logs_bloom: r.log_bloom.into(),
+			logs_bloom: r.log_bloom,
 		}
 	}
 }
@@ -116,13 +119,13 @@ impl From<EthReceipt> for Receipt {
 			transaction_index: None,
 			block_hash: None,
 			block_number: None,
-			cumulative_gas_used: r.gas_used.into(),
+			cumulative_gas_used: r.gas_used,
 			gas_used: None,
 			contract_address: None,
 			logs: r.logs.into_iter().map(Into::into).collect(),
 			status_code: Self::outcome_to_status_code(&r.outcome),
 			state_root: Self::outcome_to_state_root(r.outcome),
-			logs_bloom: r.log_bloom.into(),
+			logs_bloom: r.log_bloom,
 		}
 	}
 }
@@ -131,6 +134,7 @@ impl From<EthReceipt> for Receipt {
 mod tests {
 	use serde_json;
 	use v1::types::{Log, Receipt};
+	use ethereum_types::{H256, Bloom};
 
 	#[test]
 	fn receipt_serialization() {
@@ -139,7 +143,7 @@ mod tests {
 		let receipt = Receipt {
 			from: None,
 			to: None,
-			transaction_hash: Some(0.into()),
+			transaction_hash: Some(H256::zero()),
 			transaction_index: Some(0.into()),
 			block_hash: Some("ed76641c68a1c641aee09a94b3b471f4dc0316efe5ac19cf488e2674cf8d05b5".parse().unwrap()),
 			block_number: Some(0x4510c.into()),
@@ -155,15 +159,15 @@ mod tests {
 				data: vec![].into(),
 				block_hash: Some("ed76641c68a1c641aee09a94b3b471f4dc0316efe5ac19cf488e2674cf8d05b5".parse().unwrap()),
 				block_number: Some(0x4510c.into()),
-				transaction_hash: Some(0.into()),
+				transaction_hash: Some(H256::zero()),
 				transaction_index: Some(0.into()),
 				transaction_log_index: None,
 				log_index: Some(1.into()),
 				log_type: "mined".into(),
 				removed: false,
 			}],
-			logs_bloom: 15.into(),
-			state_root: Some(10.into()),
+			logs_bloom: Bloom::from_low_u64_be(15),
+			state_root: Some(H256::from_low_u64_be(10)),
 			status_code: Some(1u64.into()),
 		};
 

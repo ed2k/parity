@@ -1,34 +1,35 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! SecretStore-specific rpc implementation.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use accounts::AccountProvider;
 use crypto::DEFAULT_MAC;
-use ethkey::Secret;
-use ethcore::account_provider::AccountProvider;
+use ethereum_types::{H160, H256, H512};
+use crypto::publickey::Secret;
 
 use jsonrpc_core::Result;
 use v1::helpers::errors;
 use v1::helpers::secretstore::{generate_document_key, encrypt_document,
 	decrypt_document, decrypt_document_with_shadow, ordered_servers_keccak};
 use v1::traits::SecretStore;
-use v1::types::{H160, H256, H512, Bytes, EncryptedDocumentKey};
+use v1::types::{Bytes, EncryptedDocumentKey};
 use ethkey::Password;
 
 /// Parity implementation.
@@ -53,7 +54,7 @@ impl SecretStoreClient {
 	/// Decrypt secret key using account' private key
 	fn decrypt_secret(&self, address: H160, password: Password, key: Bytes) -> Result<Secret> {
 		self.decrypt_key(address, password, key)
-			.and_then(|s| Secret::from_unsafe_slice(&s).map_err(|e| errors::account("invalid secret", e)))
+			.and_then(|s| Secret::import_key(&s).map_err(|e| errors::account("invalid secret", e)))
 	}
 }
 

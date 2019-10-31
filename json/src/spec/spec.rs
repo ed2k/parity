@@ -1,38 +1,52 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Spec deserialization.
 
 use std::io::Read;
-use serde_json;
+use crate::spec::{Params, Genesis, Engine, State, HardcodedSync};
+use serde::Deserialize;
 use serde_json::Error;
-use spec::{Params, Genesis, Engine, State, HardcodedSync};
 
 /// Fork spec definition
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 pub enum ForkSpec {
+	/// EIP 150 Tangerine Whistle: Gas cost changes for IO-heavy operations (#2,463,000, 2016-10-18)
 	EIP150,
+	/// EIP 158/EIP 161 Spurious Dragon: State trie clearing (#2,675,000, 2016-11-22)
 	EIP158,
+	/// Frontier (#1, 2015-07-30)
 	Frontier,
+	/// Homestead (#1,150,000, 2016-03-14)
 	Homestead,
+	/// Byzantium Metropolis phase 1 (#4,370,000, 2017-10-16)
 	Byzantium,
+	/// Constantinople Metropolis phase 2 (#7,280,000, 2019-02-28)
 	Constantinople,
+	/// Constantinople transition test-net
+	ConstantinopleFix,
+	/// Istanbul (To be announced)
+	Istanbul,
+	/// Byzantium transition test-net
 	EIP158ToByzantiumAt5,
+	/// Homestead transition test-net
 	FrontierToHomesteadAt5,
+	/// Homestead transition test-net
 	HomesteadToDaoAt5,
+	/// EIP158/EIP161 transition test-net
 	HomesteadToEIP150At5,
 }
 
@@ -68,8 +82,7 @@ impl Spec {
 
 #[cfg(test)]
 mod tests {
-	use serde_json;
-	use spec::spec::Spec;
+	use super::Spec;
 
 	#[test]
 	fn should_error_on_unknown_fields() {

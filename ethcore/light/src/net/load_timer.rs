@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Request load timer and distribution manager.
 //!
@@ -82,7 +82,7 @@ pub struct LoadDistribution {
 
 impl LoadDistribution {
 	/// Load rolling samples from the given store.
-	pub fn load(store: &SampleStore) -> Self {
+	pub fn load(store: &dyn SampleStore) -> Self {
 		let mut samples = store.load();
 
 		for kind_samples in samples.values_mut() {
@@ -133,7 +133,7 @@ impl LoadDistribution {
 	}
 
 	/// End the current time period. Provide a store to
-	pub fn end_period(&self, store: &SampleStore) {
+	pub fn end_period(&self, store: &dyn SampleStore) {
 		let active_period = self.active_period.read();
 		let mut samples = self.samples.write();
 
@@ -199,15 +199,15 @@ pub struct FileStore(pub PathBuf);
 impl SampleStore for FileStore {
 	fn load(&self) -> HashMap<Kind, VecDeque<u64>> {
 		File::open(&self.0)
-			.map_err(|e| Box::new(bincode::ErrorKind::IoError(e)))
-			.and_then(|mut file| bincode::deserialize_from(&mut file, bincode::Infinite))
+			.map_err(|e| Box::new(bincode::ErrorKind::Io(e)))
+			.and_then(|mut file| bincode::deserialize_from(&mut file))
 			.unwrap_or_else(|_| HashMap::new())
 	}
 
 	fn store(&self, samples: &HashMap<Kind, VecDeque<u64>>) {
 		let res = File::create(&self.0)
-			.map_err(|e| Box::new(bincode::ErrorKind::IoError(e)))
-			.and_then(|mut file| bincode::serialize_into(&mut file, samples, bincode::Infinite));
+			.map_err(|e| Box::new(bincode::ErrorKind::Io(e)))
+			.and_then(|mut file| bincode::serialize_into(&mut file, samples));
 
 		if let Err(e) = res {
 			warn!(target: "pip", "Error writing light request timing samples to file: {}", e);

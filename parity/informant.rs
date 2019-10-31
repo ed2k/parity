@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 extern crate ansi_term;
 use self::ansi_term::Colour::{White, Yellow, Green, Cyan, Blue};
@@ -23,13 +23,20 @@ use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering as AtomicOrdering};
 use std::time::{Instant, Duration};
 
 use atty;
-use ethcore::client::{
-	BlockId, BlockChainClient, ChainInfo, BlockInfo, BlockChainInfo,
-	BlockQueueInfo, ChainNotify, NewBlocks, ClientReport, Client, ClientIoMessage
+use ethcore::client::Client;
+use client_traits::{BlockInfo, ChainInfo, BlockChainClient, ChainNotify};
+use types::{
+	BlockNumber,
+	chain_notify::NewBlocks,
+	client_types::ClientReport,
+	ids::BlockId,
+	io_message::ClientIoMessage,
+	blockchain_info::BlockChainInfo,
+	verification::VerificationQueueInfo as BlockQueueInfo,
+	snapshot::RestorationStatus,
 };
-use ethcore::header::BlockNumber;
-use ethcore::snapshot::{RestorationStatus, SnapshotService as SS};
-use ethcore::snapshot::service::Service as SnapshotService;
+use snapshot::SnapshotService as SS;
+use snapshot::service::Service as SnapshotService;
 use sync::{LightSyncProvider, LightSync, SyncProvider, ManageNetwork};
 use io::{TimerToken, IoContext, IoHandler};
 use light::Cache as LightDataCache;
@@ -118,8 +125,8 @@ pub trait InformantData: Send + Sync {
 /// Informant data for a full node.
 pub struct FullNodeInformantData {
 	pub client: Arc<Client>,
-	pub sync: Option<Arc<SyncProvider>>,
-	pub net: Option<Arc<ManageNetwork>>,
+	pub sync: Option<Arc<dyn SyncProvider>>,
+	pub net: Option<Arc<dyn ManageNetwork>>,
 }
 
 impl InformantData for FullNodeInformantData {
@@ -146,7 +153,7 @@ impl InformantData for FullNodeInformantData {
 			(Some(sync), Some(net)) => {
 				let status = sync.status();
 				let num_peers_range = net.num_peers_range();
-				debug_assert!(num_peers_range.end > num_peers_range.start);
+				debug_assert!(num_peers_range.end() >= num_peers_range.start());
 
 				cache_sizes.insert("sync", status.mem_used);
 
@@ -154,7 +161,7 @@ impl InformantData for FullNodeInformantData {
 					last_imported_block_number: status.last_imported_block_number.unwrap_or(chain_info.best_block_number),
 					last_imported_old_block_number: status.last_imported_old_block_number,
 					num_peers: status.num_peers,
-					max_peers: status.current_max_peers(num_peers_range.start, num_peers_range.end - 1),
+					max_peers: status.current_max_peers(*num_peers_range.start(), *num_peers_range.end()),
 					snapshot_sync: status.is_snapshot_syncing(),
 				})
 			}
@@ -174,7 +181,7 @@ impl InformantData for FullNodeInformantData {
 
 /// Informant data for a light node -- note that the network is required.
 pub struct LightNodeInformantData {
-	pub client: Arc<LightChainClient>,
+	pub client: Arc<dyn LightChainClient>,
 	pub sync: Arc<LightSync>,
 	pub cache: Arc<Mutex<LightDataCache>>,
 }
@@ -218,7 +225,7 @@ pub struct Informant<T> {
 	last_tick: RwLock<Instant>,
 	with_color: bool,
 	target: T,
-	snapshot: Option<Arc<SnapshotService>>,
+	snapshot: Option<Arc<SnapshotService<Client>>>,
 	rpc_stats: Option<Arc<RpcStats>>,
 	last_import: Mutex<Instant>,
 	skipped: AtomicUsize,
@@ -231,16 +238,16 @@ impl<T: InformantData> Informant<T> {
 	/// Make a new instance potentially `with_color` output.
 	pub fn new(
 		target: T,
-		snapshot: Option<Arc<SnapshotService>>,
+		snapshot: Option<Arc<SnapshotService<Client>>>,
 		rpc_stats: Option<Arc<RpcStats>>,
 		with_color: bool,
 	) -> Self {
 		Informant {
 			last_tick: RwLock::new(Instant::now()),
-			with_color: with_color,
-			target: target,
-			snapshot: snapshot,
-			rpc_stats: rpc_stats,
+			with_color,
+			target,
+			snapshot,
+			rpc_stats,
 			last_import: Mutex::new(Instant::now()),
 			skipped: AtomicUsize::new(0),
 			skipped_txs: AtomicUsize::new(0),
@@ -259,7 +266,7 @@ impl<T: InformantData> Informant<T> {
 		let elapsed = now.duration_since(*self.last_tick.read());
 
 		let (client_report, full_report) = {
-			let mut last_report = self.last_report.lock();
+			let last_report = self.last_report.lock();
 			let full_report = self.target.report();
 			let diffed = full_report.client_report.clone() - &*last_report;
 			(diffed, full_report)
@@ -319,9 +326,16 @@ impl<T: InformantData> Informant<T> {
 								RestorationStatus::Ongoing { state_chunks, block_chunks, state_chunks_done, block_chunks_done } => {
 									format!("Syncing snapshot {}/{}", state_chunks_done + block_chunks_done, state_chunks + block_chunks)
 								},
-								RestorationStatus::Initializing { chunks_done } => {
-									format!("Snapshot initializing ({} chunks restored)", chunks_done)
+								RestorationStatus::Initializing { chunks_done, state_chunks, block_chunks } => {
+									let total_chunks = state_chunks + block_chunks;
+									// Note that the percentage here can be slightly misleading when
+									// they have chunks already on disk: we'll import the local
+									// chunks first and then download the rest.
+									format!("Snapshot initializing ({}/{} chunks restored, {:.0}%)", chunks_done, total_chunks, (chunks_done as f32 / total_chunks as f32) * 100.0)
 								},
+								RestorationStatus::Finalizing => {
+									format!("Snapshot finalization under way")
+								}
 								_ => String::new(),
 							}
 						)
@@ -438,12 +452,16 @@ impl LightChainNotify for Informant<LightNodeInformantData> {
 
 const INFO_TIMER: TimerToken = 0;
 
-impl<T: InformantData> IoHandler<ClientIoMessage> for Informant<T> {
-	fn initialize(&self, io: &IoContext<ClientIoMessage>) {
+impl<T, C> IoHandler<ClientIoMessage<C>> for Informant<T>
+where
+	T: InformantData,
+	C: client_traits::Tick + 'static,
+{
+	fn initialize(&self, io: &IoContext<ClientIoMessage<C>>) {
 		io.register_timer(INFO_TIMER, Duration::from_secs(5)).expect("Error registering timer");
 	}
 
-	fn timeout(&self, _io: &IoContext<ClientIoMessage>, timer: TimerToken) {
+	fn timeout(&self, _io: &IoContext<ClientIoMessage<C>>, timer: TimerToken) {
 		if timer == INFO_TIMER && !self.in_shutdown.load(AtomicOrdering::SeqCst) {
 			self.tick();
 		}

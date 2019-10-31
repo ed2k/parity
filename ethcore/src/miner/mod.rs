@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 #![warn(missing_docs)]
 
@@ -20,39 +20,45 @@
 //! Keeps track of transactions and currently sealed pending block.
 
 mod miner;
-mod service_transaction_checker;
-
+mod filter_options;
 pub mod pool_client;
 #[cfg(feature = "stratum")]
 pub mod stratum;
 
-pub use self::miner::{Miner, MinerOptions, Penalization, PendingSet, AuthoringParams};
+pub use self::miner::{Miner, MinerOptions, Penalization, PendingSet, AuthoringParams, Author};
+pub use self::filter_options::FilterOptions;
+pub use ethcore_miner::local_accounts::LocalAccounts;
 pub use ethcore_miner::pool::PendingOrdering;
 
 use std::sync::Arc;
 use std::collections::{BTreeSet, BTreeMap};
 
 use bytes::Bytes;
-use ethereum_types::{H256, U256, Address};
 use ethcore_miner::pool::{VerifiedTransaction, QueueStatus, local_transactions};
-
-use block::{Block, SealedBlock};
-use client::{
-	CallContract, RegistryInfo, ScheduleInfo,
-	BlockChain, BlockProducer, SealedBlockImporter, ChainInfo,
-	AccountData, Nonce,
+use ethereum_types::{H256, U256, Address};
+use types::transaction::{self, UnverifiedTransaction, SignedTransaction, PendingTransaction};
+use types::{
+	BlockNumber,
+	errors::EthcoreError as Error,
+	block::Block,
+	header::Header,
+	receipt::RichReceipt,
 };
-use error::Error;
-use header::{BlockNumber, Header};
-use receipt::RichReceipt;
-use transaction::{self, UnverifiedTransaction, SignedTransaction, PendingTransaction};
-use state::StateInfo;
-use ethkey::Password;
+
+use call_contract::CallContract;
+use registrar::RegistrarClient;
+use client_traits::{BlockChain, ChainInfo, AccountData, Nonce, ScheduleInfo};
+use account_state::state::StateInfo;
+
+use crate::{
+	block::SealedBlock,
+	client::{BlockProducer, SealedBlockImporter},
+};
 
 /// Provides methods to verify incoming external transactions
 pub trait TransactionVerifierClient: Send + Sync
 	// Required for ServiceTransactionChecker
-	+ CallContract + RegistryInfo
+	+ CallContract + RegistrarClient
 	// Required for verifiying transactions
 	+ BlockChain + ScheduleInfo + AccountData
 {}
@@ -128,8 +134,8 @@ pub trait MinerService : Send + Sync {
 
 	/// Set info necessary to sign consensus messages and block authoring.
 	///
-	/// On PoW password is optional.
-	fn set_author(&self, address: Address, password: Option<Password>) -> Result<(), ::account_provider::SignError>;
+	/// On chains where sealing is done externally (e.g. PoW) we provide only reward beneficiary.
+	fn set_author<T: Into<Option<Author>>>(&self, author: T);
 
 	// Transaction Pool
 
@@ -182,6 +188,14 @@ pub trait MinerService : Send + Sync {
 	fn ready_transactions<C>(&self, chain: &C, max_len: usize, ordering: PendingOrdering) -> Vec<Arc<VerifiedTransaction>>
 		where C: ChainInfo + Nonce + Sync;
 
+	/// Get a list of all ready transactions either ordered by priority or unordered (cheaper), optionally filtered by hash, sender or receiver.
+	///
+	/// Depending on the settings may look in transaction pool or only in pending block.
+	/// If you don't need a full set of transactions, you can add `max_len` and create only a limited set of
+	/// transactions.
+	fn ready_transactions_filtered<C>(&self, chain: &C, max_len: usize, filter: Option<FilterOptions>, ordering: PendingOrdering) -> Vec<Arc<VerifiedTransaction>>
+		where C: ChainInfo + Nonce + Sync;
+
 	/// Get a list of all transactions in the pool (some of them might not be ready for inclusion yet).
 	fn queued_transactions(&self) -> Vec<Arc<VerifiedTransaction>>;
 
@@ -203,4 +217,8 @@ pub trait MinerService : Send + Sync {
 
 	/// Suggested gas limit.
 	fn sensible_gas_limit(&self) -> U256;
+
+	/// Set a new minimum gas limit.
+	/// Will not work if dynamic gas calibration is set.
+	fn set_minimal_gas_price(&self, gas_price: U256) -> Result<bool, &str>;
 }

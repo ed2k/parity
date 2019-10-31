@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::fmt;
 use cli::Args;
@@ -229,6 +229,16 @@ pub fn find_deprecated(args: &Args) -> Vec<Deprecated> {
 		result.push(Deprecated::Removed("--ntp-servers"));
 	}
 
+	// Removed in 2.7.
+
+	if args.flag_whisper {
+		result.push(Deprecated::Removed("--whisper"));
+	}
+
+	if args.arg_whisper_pool_size.is_some() {
+		result.push(Deprecated::Removed("--whisper-pool-size"));
+	}
+
 	result
 }
 
@@ -261,6 +271,8 @@ mod tests {
 			args.flag_dapps_apis_all = true;
 			args.flag_fast_and_loose = true;
 			args.arg_ntp_servers = Some(Default::default());
+			args.flag_whisper = true;
+			args.arg_whisper_pool_size = Some(Default::default());
 			args
 		}), vec![
 			Deprecated::DoesNothing("--warp"),
@@ -282,6 +294,8 @@ mod tests {
 			Deprecated::Replaced("--dapps-apis-all", "--jsonrpc-apis"),
 			Deprecated::Removed("--fast-and-loose"),
 			Deprecated::Removed("--ntp-servers"),
+			Deprecated::Removed("--whisper"),
+			Deprecated::Removed("--whisper-pool-size"),
 		]);
 	}
 }

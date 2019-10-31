@@ -1,21 +1,21 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::cmp;
-use ethereum_types::{U256, H256};
+use ethereum_types::{BigEndianHash, U256};
 use super::u256_to_address;
 
 use {evm, vm};
@@ -106,10 +106,10 @@ impl<Gas: evm::CostType> Gasometer<Gas> {
 	/// it will be the amount of gas that the current context provides to the child context.
 	pub fn requirements(
 		&mut self,
-		ext: &vm::Ext,
+		ext: &dyn vm::Ext,
 		instruction: Instruction,
 		info: &InstructionInfo,
-		stack: &Stack<U256>,
+		stack: &dyn Stack<U256>,
 		current_mem_size: usize,
 	) -> vm::Result<InstructionRequirements<Gas>> {
 		let schedule = ext.schedule();
@@ -121,12 +121,16 @@ impl<Gas: evm::CostType> Gasometer<Gas> {
 				Request::Gas(Gas::from(1))
 			},
 			instructions::SSTORE => {
-				let address = H256::from(stack.peek(0));
+				if schedule.eip1706 && self.current_gas <= Gas::from(schedule.call_stipend) {
+					return Err(vm::Error::OutOfGas);
+				}
+
+				let address = BigEndianHash::from_uint(stack.peek(0));
 				let newval = stack.peek(1);
-				let val = U256::from(&*ext.storage_at(&address)?);
+				let val = ext.storage_at(&address)?.into_uint();
 
 				let gas = if schedule.eip1283 {
-					let orig = U256::from(&*ext.initial_storage_at(&address)?);
+					let orig = ext.initial_storage_at(&address)?.into_uint();
 					calculate_eip1283_sstore_gas(schedule, &orig, &val, &newval)
 				} else {
 					if val.is_zero() && !newval.is_zero() {
@@ -402,7 +406,7 @@ fn calculate_eip1283_sstore_gas<Gas: evm::CostType>(schedule: &Schedule, origina
 	)
 }
 
-pub fn handle_eip1283_sstore_clears_refund(ext: &mut vm::Ext, original: &U256, current: &U256, new: &U256) {
+pub fn handle_eip1283_sstore_clears_refund(ext: &mut dyn vm::Ext, original: &U256, current: &U256, new: &U256) {
 	let sstore_clears_schedule = ext.schedule().sstore_refund_gas;
 
 	if current == new {

@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::io;
 use std::sync::Arc;
@@ -29,7 +29,7 @@ use parity_rpc::{self as rpc, Metadata, DomainsValidation};
 use rpc_apis::{self, ApiSet};
 
 pub use parity_rpc::{IpcServer, HttpServer, RequestMiddleware};
-pub use parity_rpc::ws::Server as WsServer;
+pub use parity_rpc::ws::{Server as WsServer, ws};
 
 pub const DAPPS_DOMAIN: &'static str = "web3.site";
 
@@ -151,7 +151,7 @@ pub fn new_ws<D: rpc_apis::Dependencies>(
 	let url = format!("{}:{}", conf.interface, conf.port);
 	let addr = url.parse().map_err(|_| format!("Invalid WebSockets listen host/port given: {}", url))?;
 
-	let full_handler = setup_apis(rpc_apis::ApiSet::SafeContext, deps);
+	let full_handler = setup_apis(rpc_apis::ApiSet::All, deps);
 	let handler = {
 		let mut handler = MetaIoHandler::with_middleware((
 			rpc::WsDispatcher::new(full_handler),
@@ -187,7 +187,9 @@ pub fn new_ws<D: rpc_apis::Dependencies>(
 
 	match start_result {
 		Ok(server) => Ok(Some(server)),
-		Err(rpc::ws::Error(rpc::ws::ErrorKind::Io(ref err), _)) if err.kind() == io::ErrorKind::AddrInUse => Err(
+		Err(rpc::ws::Error::WsError(ws::Error {
+			kind: ws::ErrorKind::Io(ref err), ..
+		})) if err.kind() == io::ErrorKind::AddrInUse => Err(
 			format!("WebSockets address {} is already in use, make sure that another instance of an Ethereum client is not running or change the address using the --ws-port and --ws-interface options.", url)
 		),
 		Err(e) => Err(format!("WebSockets error: {:?}", e)),

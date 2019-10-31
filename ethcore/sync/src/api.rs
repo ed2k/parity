@@ -1,54 +1,72 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::sync::{Arc, mpsc, atomic};
 use std::collections::{HashMap, BTreeMap};
 use std::io;
-use std::ops::Range;
+use std::ops::RangeInclusive;
 use std::time::Duration;
-use bytes::Bytes;
-use devp2p::NetworkService;
-use network::{NetworkProtocolHandler, NetworkContext, PeerId, ProtocolId,
-	NetworkConfiguration as BasicNetworkConfiguration, NonReservedPeerMode, Error, ErrorKind,
-	ConnectionFilter};
-
-use types::pruning_info::PruningInfo;
-use ethereum_types::{H256, H512, U256};
-use io::{TimerToken};
-use ethcore::ethstore::ethkey::Secret;
-use ethcore::client::{BlockChainClient, ChainNotify, NewBlocks, ChainMessageType};
-use ethcore::snapshot::SnapshotService;
-use ethcore::header::BlockNumber;
-use sync_io::NetSyncIo;
-use chain::{ChainSyncApi, SyncStatus as EthSyncStatus};
 use std::net::{SocketAddr, AddrParseError};
 use std::str::FromStr;
-use parking_lot::{RwLock, Mutex};
-use chain::{ETH_PROTOCOL_VERSION_63, ETH_PROTOCOL_VERSION_62,
-	PAR_PROTOCOL_VERSION_1, PAR_PROTOCOL_VERSION_2, PAR_PROTOCOL_VERSION_3,
-	PRIVATE_TRANSACTION_PACKET, SIGNED_PRIVATE_TRANSACTION_PACKET};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use crate::sync_io::NetSyncIo;
+use crate::light_sync::{self, SyncInfo};
+use crate::private_tx::PrivateTxHandler;
+use crate::chain::{
+	sync_packet::SyncPacket::{PrivateTransactionPacket, SignedPrivateTransactionPacket},
+	ChainSyncApi, SyncState, SyncStatus as EthSyncStatus, ETH_PROTOCOL_VERSION_62,
+	ETH_PROTOCOL_VERSION_63, PAR_PROTOCOL_VERSION_1, PAR_PROTOCOL_VERSION_2,
+	PAR_PROTOCOL_VERSION_3, PAR_PROTOCOL_VERSION_4,
+};
+
+use bytes::Bytes;
+use client_traits::{BlockChainClient, ChainNotify};
+use devp2p::NetworkService;
+use ethcore_io::TimerToken;
+use ethcore_private_tx::PrivateStateDB;
+use ethereum_types::{H256, H512, U256};
+use parity_crypto::publickey::Secret;
+use futures::sync::mpsc as futures_mpsc;
+use futures::Stream;
 use light::client::AsLightClient;
 use light::Provider;
 use light::net::{
 	self as light_net, LightProtocol, Params as LightParams,
 	Capabilities, Handler as LightHandler, EventContext, SampleStore,
 };
-use network::IpFilter;
-use private_tx::PrivateTxHandler;
-use transaction::UnverifiedTransaction;
+use log::{trace, warn};
+use macros::hash_map;
+use network::{
+	client_version::ClientVersion,
+	NetworkProtocolHandler, NetworkContext, PeerId, ProtocolId,
+	NetworkConfiguration as BasicNetworkConfiguration, NonReservedPeerMode, Error,
+	ConnectionFilter, IpFilter
+};
+use snapshot::SnapshotService;
+use parking_lot::{RwLock, Mutex};
+use parity_runtime::Executor;
+use trace_time::trace_time;
+use common_types::{
+	BlockNumber,
+	chain_notify::{NewBlocks, ChainMessageType},
+	pruning_info::PruningInfo,
+	transaction::UnverifiedTransaction,
+};
+
 
 /// Parity sync protocol
 pub const WARP_SYNC_PROTOCOL_ID: ProtocolId = *b"par";
@@ -58,7 +76,7 @@ pub const ETH_PROTOCOL: ProtocolId = *b"eth";
 pub const LIGHT_PROTOCOL: ProtocolId = *b"pip";
 
 /// Determine warp sync status.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, MallocSizeOf)]
 pub enum WarpSync {
 	/// Warp sync is enabled.
 	Enabled,
@@ -128,6 +146,9 @@ impl Default for SyncConfig {
 	}
 }
 
+/// receiving end of a futures::mpsc channel
+pub type Notification<T> = futures_mpsc::UnboundedReceiver<T>;
+
 /// Current sync status
 pub trait SyncProvider: Send + Sync {
 	/// Get sync status
@@ -139,8 +160,14 @@ pub trait SyncProvider: Send + Sync {
 	/// Get the enode if available.
 	fn enode(&self) -> Option<String>;
 
+	/// gets sync status notifications
+	fn sync_notification(&self) -> Notification<SyncState>;
+
 	/// Returns propagation count for pending transactions.
 	fn transactions_stats(&self) -> BTreeMap<H256, TransactionStats>;
+
+	/// are we in the middle of a major sync?
+	fn is_major_syncing(&self) -> bool;
 }
 
 /// Transaction stats
@@ -158,7 +185,7 @@ pub struct PeerInfo {
 	/// Public node id
 	pub id: Option<String>,
 	/// Node client ID
-	pub client_version: String,
+	pub client_version: ClientVersion,
 	/// Capabilities
 	pub capabilities: Vec<String>,
 	/// Remote endpoint address
@@ -203,31 +230,6 @@ impl From<light_net::Status> for PipProtocolInfo {
 	}
 }
 
-/// Configuration to attach alternate protocol handlers.
-/// Only works when IPC is disabled.
-pub struct AttachedProtocol {
-	/// The protocol handler in question.
-	pub handler: Arc<NetworkProtocolHandler + Send + Sync>,
-	/// 3-character ID for the protocol.
-	pub protocol_id: ProtocolId,
-	/// Supported versions and their packet counts.
-	pub versions: &'static [(u8, u8)],
-}
-
-impl AttachedProtocol {
-	fn register(&self, network: &NetworkService) {
-		let res = network.register_protocol(
-			self.handler.clone(),
-			self.protocol_id,
-			self.versions
-		);
-
-		if let Err(e) = res {
-			warn!(target: "sync", "Error attaching protocol {:?}: {:?}", self.protocol_id, e);
-		}
-	}
-}
-
 /// A prioritized tasks run in a specialised timer.
 /// Every task should be completed within a hard deadline,
 /// if it's not it's either cancelled or split into multiple tasks.
@@ -263,18 +265,20 @@ impl PriorityTask {
 pub struct Params {
 	/// Configuration.
 	pub config: SyncConfig,
+	/// Runtime executor
+	pub executor: Executor,
 	/// Blockchain client.
-	pub chain: Arc<BlockChainClient>,
+	pub chain: Arc<dyn BlockChainClient>,
 	/// Snapshot service.
-	pub snapshot_service: Arc<SnapshotService>,
+	pub snapshot_service: Arc<dyn SnapshotService>,
 	/// Private tx service.
-	pub private_tx_handler: Arc<PrivateTxHandler>,
+	pub private_tx_handler: Option<Arc<dyn PrivateTxHandler>>,
+	/// Private state wrapper
+	pub private_state: Option<Arc<PrivateStateDB>>,
 	/// Light data provider.
-	pub provider: Arc<::light::Provider>,
+	pub provider: Arc<dyn (::light::Provider)>,
 	/// Network layer configuration.
 	pub network_config: NetworkConfiguration,
-	/// Other protocols to attach.
-	pub attached_protos: Vec<AttachedProtocol>,
 }
 
 /// Ethereum network protocol handler
@@ -285,21 +289,21 @@ pub struct EthSync {
 	eth_handler: Arc<SyncProtocolHandler>,
 	/// Light (pip) protocol handler
 	light_proto: Option<Arc<LightProtocol>>,
-	/// Other protocols to attach.
-	attached_protos: Vec<AttachedProtocol>,
 	/// The main subprotocol name
 	subprotocol_name: [u8; 3],
 	/// Light subprotocol name.
 	light_subprotocol_name: [u8; 3],
 	/// Priority tasks notification channel
 	priority_tasks: Mutex<mpsc::Sender<PriorityTask>>,
+	/// for state tracking
+	is_major_syncing: Arc<AtomicBool>
 }
 
 fn light_params(
 	network_id: u64,
 	median_peers: f64,
 	pruning_info: PruningInfo,
-	sample_store: Option<Box<SampleStore>>,
+	sample_store: Option<Box<dyn SampleStore>>,
 ) -> LightParams {
 	let mut light_params = LightParams {
 		network_id: network_id,
@@ -319,7 +323,7 @@ fn light_params(
 
 impl EthSync {
 	/// Creates and register protocol with the network service
-	pub fn new(params: Params, connection_filter: Option<Arc<ConnectionFilter>>) -> Result<Arc<EthSync>, Error> {
+	pub fn new(params: Params, connection_filter: Option<Arc<dyn ConnectionFilter>>) -> Result<Arc<EthSync>, Error> {
 		let pruning_info = params.chain.pruning_info();
 		let light_proto = match params.config.serve_light {
 			false => None,
@@ -349,9 +353,33 @@ impl EthSync {
 		let sync = ChainSyncApi::new(
 			params.config,
 			&*params.chain,
-			params.private_tx_handler.clone(),
+			params.private_tx_handler.as_ref().cloned(),
 			priority_tasks_rx,
 		);
+
+		let is_major_syncing = Arc::new(AtomicBool::new(false));
+
+		{
+			// spawn task that constantly updates EthSync.is_major_sync
+			let notifications = sync.write().sync_notifications();
+			let moved_client = Arc::downgrade(&params.chain);
+			let moved_is_major_syncing = is_major_syncing.clone();
+
+			params.executor.spawn(notifications.for_each(move |sync_status| {
+				if let Some(queue_info) = moved_client.upgrade().map(|client| client.queue_info()) {
+					let is_syncing_state = match sync_status {
+						SyncState::Idle | SyncState::NewBlocks => false,
+						_ => true
+					};
+					let is_verifying = queue_info.unverified_queue_size + queue_info.verified_queue_size > 3;
+					moved_is_major_syncing.store(is_verifying || is_syncing_state, Ordering::SeqCst);
+					return Ok(())
+				}
+
+				// client has been dropped
+				return Err(())
+			}));
+		}
 		let service = NetworkService::new(params.network_config.clone().into_basic()?, connection_filter)?;
 
 		let sync = Arc::new(EthSync {
@@ -361,12 +389,13 @@ impl EthSync {
 				chain: params.chain,
 				snapshot_service: params.snapshot_service,
 				overlay: RwLock::new(HashMap::new()),
+				private_state: params.private_state,
 			}),
 			light_proto: light_proto,
 			subprotocol_name: params.config.subprotocol_name,
 			light_subprotocol_name: params.config.light_subprotocol_name,
-			attached_protos: params.attached_protos,
 			priority_tasks: Mutex::new(priority_tasks_tx),
+			is_major_syncing
 		});
 
 		Ok(sync)
@@ -417,6 +446,14 @@ impl SyncProvider for EthSync {
 	fn transactions_stats(&self) -> BTreeMap<H256, TransactionStats> {
 		self.eth_handler.sync.transactions_stats()
 	}
+
+	fn sync_notification(&self) -> Notification<SyncState> {
+		self.eth_handler.sync.write().sync_notifications()
+	}
+
+	fn is_major_syncing(&self) -> bool {
+		self.is_major_syncing.load(Ordering::SeqCst)
+	}
 }
 
 const PEERS_TIMER: TimerToken = 0;
@@ -429,17 +466,19 @@ pub(crate) const PRIORITY_TIMER_INTERVAL: Duration = Duration::from_millis(250);
 
 struct SyncProtocolHandler {
 	/// Shared blockchain client.
-	chain: Arc<BlockChainClient>,
+	chain: Arc<dyn BlockChainClient>,
 	/// Shared snapshot service.
-	snapshot_service: Arc<SnapshotService>,
+	snapshot_service: Arc<dyn SnapshotService>,
 	/// Sync strategy
 	sync: ChainSyncApi,
 	/// Chain overlay used to cache data such as fork block.
 	overlay: RwLock<HashMap<BlockNumber, Bytes>>,
+	/// Private state db
+	private_state: Option<Arc<PrivateStateDB>>,
 }
 
 impl NetworkProtocolHandler for SyncProtocolHandler {
-	fn initialize(&self, io: &NetworkContext) {
+	fn initialize(&self, io: &dyn NetworkContext) {
 		if io.subprotocol_name() != WARP_SYNC_PROTOCOL_ID {
 			io.register_timer(PEERS_TIMER, Duration::from_millis(700)).expect("Error registering peers timer");
 			io.register_timer(MAINTAIN_SYNC_TIMER, Duration::from_millis(1100)).expect("Error registering sync timer");
@@ -450,30 +489,45 @@ impl NetworkProtocolHandler for SyncProtocolHandler {
 		}
 	}
 
-	fn read(&self, io: &NetworkContext, peer: &PeerId, packet_id: u8, data: &[u8]) {
-		self.sync.dispatch_packet(&mut NetSyncIo::new(io, &*self.chain, &*self.snapshot_service, &self.overlay), *peer, packet_id, data);
+	fn read(&self, io: &dyn NetworkContext, peer: &PeerId, packet_id: u8, data: &[u8]) {
+		self.sync.dispatch_packet(&mut NetSyncIo::new(io,
+			&*self.chain,
+			&*self.snapshot_service,
+			&self.overlay,
+			self.private_state.clone()),
+			*peer, packet_id, data);
 	}
 
-	fn connected(&self, io: &NetworkContext, peer: &PeerId) {
+	fn connected(&self, io: &dyn NetworkContext, peer: &PeerId) {
 		trace_time!("sync::connected");
 		// If warp protocol is supported only allow warp handshake
 		let warp_protocol = io.protocol_version(WARP_SYNC_PROTOCOL_ID, *peer).unwrap_or(0) != 0;
 		let warp_context = io.subprotocol_name() == WARP_SYNC_PROTOCOL_ID;
 		if warp_protocol == warp_context {
-			self.sync.write().on_peer_connected(&mut NetSyncIo::new(io, &*self.chain, &*self.snapshot_service, &self.overlay), *peer);
+			self.sync.write().on_peer_connected(&mut NetSyncIo::new(io,
+			&*self.chain,
+			&*self.snapshot_service,
+			&self.overlay,
+			self.private_state.clone()),
+			*peer);
 		}
 	}
 
-	fn disconnected(&self, io: &NetworkContext, peer: &PeerId) {
+	fn disconnected(&self, io: &dyn NetworkContext, peer: &PeerId) {
 		trace_time!("sync::disconnected");
 		if io.subprotocol_name() != WARP_SYNC_PROTOCOL_ID {
-			self.sync.write().on_peer_aborting(&mut NetSyncIo::new(io, &*self.chain, &*self.snapshot_service, &self.overlay), *peer);
+			self.sync.write().on_peer_aborting(&mut NetSyncIo::new(io,
+				&*self.chain,
+				&*self.snapshot_service,
+				&self.overlay,
+				self.private_state.clone()),
+				*peer);
 		}
 	}
 
-	fn timeout(&self, io: &NetworkContext, timer: TimerToken) {
+	fn timeout(&self, io: &dyn NetworkContext, timer: TimerToken) {
 		trace_time!("sync::timeout");
-		let mut io = NetSyncIo::new(io, &*self.chain, &*self.snapshot_service, &self.overlay);
+		let mut io = NetSyncIo::new(io, &*self.chain, &*self.snapshot_service, &self.overlay, self.private_state.clone());
 		match timer {
 			PEERS_TIMER => self.sync.write().maintain_peers(&mut io),
 			MAINTAIN_SYNC_TIMER => self.sync.write().maintain_sync(&mut io),
@@ -504,8 +558,11 @@ impl ChainNotify for EthSync {
 		use light::net::Announcement;
 
 		self.network.with_context(self.subprotocol_name, |context| {
-			let mut sync_io = NetSyncIo::new(context, &*self.eth_handler.chain, &*self.eth_handler.snapshot_service,
-				&self.eth_handler.overlay);
+			let mut sync_io = NetSyncIo::new(context,
+				&*self.eth_handler.chain,
+				&*self.eth_handler.snapshot_service,
+				&self.eth_handler.overlay,
+				self.eth_handler.private_state.clone());
 			self.eth_handler.sync.write().chain_new_blocks(
 				&mut sync_io,
 				&new_blocks.imported,
@@ -540,7 +597,7 @@ impl ChainNotify for EthSync {
 		match self.network.start() {
 			Err((err, listen_address)) => {
 				match err.into() {
-					ErrorKind::Io(ref e) if e.kind() == io::ErrorKind::AddrInUse => {
+					Error::Io(ref e) if e.kind() == io::ErrorKind::AddrInUse => {
 						warn!("Network port {:?} is already in use, make sure that another instance of an Ethereum client is not running or change the port using the --port option.", listen_address.expect("Listen address is not set."))
 					},
 					err => warn!("Error starting network: {}", err),
@@ -552,7 +609,7 @@ impl ChainNotify for EthSync {
 		self.network.register_protocol(self.eth_handler.clone(), self.subprotocol_name, &[ETH_PROTOCOL_VERSION_62, ETH_PROTOCOL_VERSION_63])
 			.unwrap_or_else(|e| warn!("Error registering ethereum protocol: {:?}", e));
 		// register the warp sync subprotocol
-		self.network.register_protocol(self.eth_handler.clone(), WARP_SYNC_PROTOCOL_ID, &[PAR_PROTOCOL_VERSION_1, PAR_PROTOCOL_VERSION_2, PAR_PROTOCOL_VERSION_3])
+		self.network.register_protocol(self.eth_handler.clone(), WARP_SYNC_PROTOCOL_ID, &[PAR_PROTOCOL_VERSION_1, PAR_PROTOCOL_VERSION_2, PAR_PROTOCOL_VERSION_3, PAR_PROTOCOL_VERSION_4])
 			.unwrap_or_else(|e| warn!("Error registering snapshot sync protocol: {:?}", e));
 
 		// register the light protocol.
@@ -560,9 +617,6 @@ impl ChainNotify for EthSync {
 			self.network.register_protocol(light_proto, self.light_subprotocol_name, ::light::net::PROTOCOL_VERSIONS)
 				.unwrap_or_else(|e| warn!("Error registering light client protocol: {:?}", e));
 		}
-
-		// register any attached protocols.
-		for proto in &self.attached_protos { proto.register(&self.network) }
 	}
 
 	fn stop(&self) {
@@ -572,13 +626,19 @@ impl ChainNotify for EthSync {
 
 	fn broadcast(&self, message_type: ChainMessageType) {
 		self.network.with_context(WARP_SYNC_PROTOCOL_ID, |context| {
-			let mut sync_io = NetSyncIo::new(context, &*self.eth_handler.chain, &*self.eth_handler.snapshot_service, &self.eth_handler.overlay);
+			let mut sync_io = NetSyncIo::new(context,
+				&*self.eth_handler.chain,
+				&*self.eth_handler.snapshot_service,
+				&self.eth_handler.overlay,
+				self.eth_handler.private_state.clone());
 			match message_type {
 				ChainMessageType::Consensus(message) => self.eth_handler.sync.write().propagate_consensus_packet(&mut sync_io, message),
 				ChainMessageType::PrivateTransaction(transaction_hash, message) =>
-					self.eth_handler.sync.write().propagate_private_transaction(&mut sync_io, transaction_hash, PRIVATE_TRANSACTION_PACKET, message),
+					self.eth_handler.sync.write().propagate_private_transaction(&mut sync_io, transaction_hash, PrivateTransactionPacket, message),
 				ChainMessageType::SignedPrivateTransaction(transaction_hash, message) =>
-					self.eth_handler.sync.write().propagate_private_transaction(&mut sync_io, transaction_hash, SIGNED_PRIVATE_TRANSACTION_PACKET, message),
+					self.eth_handler.sync.write().propagate_private_transaction(&mut sync_io, transaction_hash, SignedPrivateTransactionPacket, message),
+				ChainMessageType::PrivateStateRequest(hash) =>
+					self.eth_handler.sync.write().request_private_state(&mut sync_io, &hash),
 			}
 		});
 	}
@@ -591,17 +651,17 @@ impl ChainNotify for EthSync {
 
 /// PIP event handler.
 /// Simply queues transactions from light client peers.
-struct TxRelay(Arc<BlockChainClient>);
+struct TxRelay(Arc<dyn BlockChainClient>);
 
 impl LightHandler for TxRelay {
-	fn on_transactions(&self, ctx: &EventContext, relay: &[::transaction::UnverifiedTransaction]) {
+	fn on_transactions(&self, ctx: &dyn EventContext, relay: &[UnverifiedTransaction]) {
 		trace!(target: "pip", "Relaying {} transactions from peer {}", relay.len(), ctx.peer());
-		self.0.queue_transactions(relay.iter().map(|tx| ::rlp::encode(tx)).collect(), ctx.peer())
+		self.0.queue_transactions(relay.iter().map(|tx| rlp::encode(tx)).collect(), ctx.peer())
 	}
 }
 
 /// Trait for managing network
-pub trait ManageNetwork : Send + Sync {
+pub trait ManageNetwork: Send + Sync {
 	/// Set to allow unreserved peers to connect
 	fn accept_unreserved_peers(&self);
 	/// Set to deny unreserved peers to connect
@@ -615,11 +675,9 @@ pub trait ManageNetwork : Send + Sync {
 	/// Stop network
 	fn stop_network(&self);
 	/// Returns the minimum and maximum peers.
-	/// Note that `range.end` is *exclusive*.
-	// TODO: Range should be changed to RangeInclusive once stable (https://github.com/rust-lang/rust/pull/50758)
-	fn num_peers_range(&self) -> Range<u32>;
+	fn num_peers_range(&self) -> RangeInclusive<u32>;
 	/// Get network context for protocol.
-	fn with_proto_context(&self, proto: ProtocolId, f: &mut FnMut(&NetworkContext));
+	fn with_proto_context(&self, proto: ProtocolId, f: &mut dyn FnMut(&dyn NetworkContext));
 }
 
 impl ManageNetwork for EthSync {
@@ -645,7 +703,11 @@ impl ManageNetwork for EthSync {
 
 	fn stop_network(&self) {
 		self.network.with_context(self.subprotocol_name, |context| {
-			let mut sync_io = NetSyncIo::new(context, &*self.eth_handler.chain, &*self.eth_handler.snapshot_service, &self.eth_handler.overlay);
+			let mut sync_io = NetSyncIo::new(context,
+				&*self.eth_handler.chain,
+				&*self.eth_handler.snapshot_service,
+				&self.eth_handler.overlay,
+				self.eth_handler.private_state.clone());
 			self.eth_handler.sync.write().abort(&mut sync_io);
 		});
 
@@ -656,11 +718,11 @@ impl ManageNetwork for EthSync {
 		self.stop();
 	}
 
-	fn num_peers_range(&self) -> Range<u32> {
+	fn num_peers_range(&self) -> RangeInclusive<u32> {
 		self.network.num_peers_range()
 	}
 
-	fn with_proto_context(&self, proto: ProtocolId, f: &mut FnMut(&NetworkContext)) {
+	fn with_proto_context(&self, proto: ProtocolId, f: &mut dyn FnMut(&dyn NetworkContext)) {
 		self.network.with_context_eval(proto, f);
 	}
 }
@@ -805,6 +867,24 @@ pub trait LightSyncProvider {
 	fn transactions_stats(&self) -> BTreeMap<H256, TransactionStats>;
 }
 
+/// Wrapper around `light_sync::SyncInfo` to expose those methods without the concrete type `LightSync`
+pub trait LightSyncInfo: Send + Sync {
+	/// Get the highest block advertised on the network.
+	fn highest_block(&self) -> Option<u64>;
+
+	/// Get the block number at the time of sync start.
+	fn start_block(&self) -> u64;
+
+	/// Whether major sync is underway.
+	fn is_major_importing(&self) -> bool;
+}
+
+/// Execute a closure with a protocol context.
+pub trait LightNetworkDispatcher {
+	/// Execute a closure with a protocol context.
+	fn with_context<F, T>(&self, f: F) -> Option<T> where F: FnOnce(&dyn (::light::net::BasicContext)) -> T;
+}
+
 /// Configuration for the light sync.
 pub struct LightSyncParams<L> {
 	/// Network configuration.
@@ -816,16 +896,13 @@ pub struct LightSyncParams<L> {
 	/// Subprotocol name.
 	pub subprotocol_name: [u8; 3],
 	/// Other handlers to attach.
-	pub handlers: Vec<Arc<LightHandler>>,
-	/// Other subprotocols to run.
-	pub attached_protos: Vec<AttachedProtocol>,
+	pub handlers: Vec<Arc<dyn LightHandler>>,
 }
 
 /// Service for light synchronization.
 pub struct LightSync {
 	proto: Arc<LightProtocol>,
-	sync: Arc<::light_sync::SyncInfo + Sync + Send>,
-	attached_protos: Vec<AttachedProtocol>,
+	sync: Arc<dyn SyncInfo + Sync + Send>,
 	network: NetworkService,
 	subprotocol_name: [u8; 3],
 	network_id: u64,
@@ -868,28 +945,28 @@ impl LightSync {
 		Ok(LightSync {
 			proto: light_proto,
 			sync: sync,
-			attached_protos: params.attached_protos,
 			network: service,
 			subprotocol_name: params.subprotocol_name,
 			network_id: params.network_id,
 		})
 	}
 
-	/// Execute a closure with a protocol context.
-	pub fn with_context<F, T>(&self, f: F) -> Option<T>
-		where F: FnOnce(&::light::net::BasicContext) -> T
-	{
+}
+
+impl std::ops::Deref for LightSync {
+	type Target = dyn (light_sync::SyncInfo);
+
+	fn deref(&self) -> &Self::Target { &*self.sync }
+}
+
+
+impl LightNetworkDispatcher for LightSync {
+	fn with_context<F, T>(&self, f: F) -> Option<T> where F: FnOnce(&dyn (light::net::BasicContext)) -> T {
 		self.network.with_context_eval(
 			self.subprotocol_name,
 			move |ctx| self.proto.with_context(&ctx, f),
 		)
 	}
-}
-
-impl ::std::ops::Deref for LightSync {
-	type Target = ::light_sync::SyncInfo;
-
-	fn deref(&self) -> &Self::Target { &*self.sync }
 }
 
 impl ManageNetwork for LightSync {
@@ -913,7 +990,7 @@ impl ManageNetwork for LightSync {
 		match self.network.start() {
 			Err((err, listen_address)) => {
 				match err.into() {
-					ErrorKind::Io(ref e) if e.kind() == io::ErrorKind::AddrInUse => {
+					Error::Io(ref e) if e.kind() == io::ErrorKind::AddrInUse => {
 						warn!("Network port {:?} is already in use, make sure that another instance of an Ethereum client is not running or change the port using the --port option.", listen_address.expect("Listen address is not set."))
 					},
 					err => warn!("Error starting network: {}", err),
@@ -926,8 +1003,6 @@ impl ManageNetwork for LightSync {
 
 		self.network.register_protocol(light_proto, self.subprotocol_name, ::light::net::PROTOCOL_VERSIONS)
 			.unwrap_or_else(|e| warn!("Error registering light client protocol: {:?}", e));
-
-		for proto in &self.attached_protos { proto.register(&self.network) }
 	}
 
 	fn stop_network(&self) {
@@ -935,11 +1010,11 @@ impl ManageNetwork for LightSync {
 		self.network.stop();
 	}
 
-	fn num_peers_range(&self) -> Range<u32> {
+	fn num_peers_range(&self) -> RangeInclusive<u32> {
 		self.network.num_peers_range()
 	}
 
-	fn with_proto_context(&self, proto: ProtocolId, f: &mut FnMut(&NetworkContext)) {
+	fn with_proto_context(&self, proto: ProtocolId, f: &mut dyn FnMut(&dyn NetworkContext)) {
 		self.network.with_context_eval(proto, f);
 	}
 }
@@ -948,12 +1023,12 @@ impl LightSyncProvider for LightSync {
 	fn peer_numbers(&self) -> PeerNumbers {
 		let (connected, active) = self.proto.peer_count();
 		let peers_range = self.num_peers_range();
-		debug_assert!(peers_range.end > peers_range.start);
+		debug_assert!(peers_range.end() >= peers_range.start());
 		PeerNumbers {
 			connected: connected,
 			active: active,
-			max: peers_range.end as usize - 1,
-			min: peers_range.start as usize,
+			max: *peers_range.end() as usize,
+			min: *peers_range.start() as usize,
 		}
 	}
 
@@ -990,5 +1065,19 @@ impl LightSyncProvider for LightSync {
 
 	fn transactions_stats(&self) -> BTreeMap<H256, TransactionStats> {
 		Default::default() // TODO
+	}
+}
+
+impl LightSyncInfo for LightSync {
+	fn highest_block(&self) -> Option<u64> {
+		(*self.sync).highest_block()
+	}
+
+	fn start_block(&self) -> u64 {
+		(*self.sync).start_block()
+	}
+
+	fn is_major_importing(&self) -> bool {
+		(*self.sync).is_major_importing()
 	}
 }

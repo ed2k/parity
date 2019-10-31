@@ -1,29 +1,35 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
-use network::{Error, NetworkConfiguration, NetworkProtocolHandler, NonReservedPeerMode};
-use network::{NetworkContext, PeerId, ProtocolId, NetworkIoMessage};
-use host::Host;
-use io::*;
-use parking_lot::RwLock;
 use std::net::SocketAddr;
-use std::ops::Range;
+use std::ops::RangeInclusive;
 use std::sync::Arc;
+
 use ansi_term::Colour;
-use network::ConnectionFilter;
+use log::info;
+use parking_lot::RwLock;
+
+use ethcore_io::{IoContext, IoHandler, IoService};
+use network::{
+	ConnectionFilter, Error, NetworkConfiguration, NetworkContext,
+	NetworkIoMessage, NetworkProtocolHandler, NonReservedPeerMode, PeerId, ProtocolId,
+
+};
+
+use crate::host::Host;
 
 struct HostHandler {
 	public_url: RwLock<Option<String>>
@@ -49,12 +55,12 @@ pub struct NetworkService {
 	host: RwLock<Option<Arc<Host>>>,
 	host_handler: Arc<HostHandler>,
 	config: NetworkConfiguration,
-	filter: Option<Arc<ConnectionFilter>>,
+	filter: Option<Arc<dyn ConnectionFilter>>,
 }
 
 impl NetworkService {
 	/// Starts IO event loop
-	pub fn new(config: NetworkConfiguration, filter: Option<Arc<ConnectionFilter>>) -> Result<NetworkService, Error> {
+	pub fn new(config: NetworkConfiguration, filter: Option<Arc<dyn ConnectionFilter>>) -> Result<NetworkService, Error> {
 		let host_handler = Arc::new(HostHandler { public_url: RwLock::new(None) });
 		let io_service = IoService::<NetworkIoMessage>::start()?;
 
@@ -71,7 +77,7 @@ impl NetworkService {
 	/// Register a new protocol handler with the event loop.
 	pub fn register_protocol(
 		&self,
-		handler: Arc<NetworkProtocolHandler + Send + Sync>,
+		handler: Arc<dyn NetworkProtocolHandler + Send + Sync>,
 		protocol: ProtocolId,
 		// version id + packet count
 		versions: &[(u8, u8)]
@@ -95,12 +101,8 @@ impl NetworkService {
 	}
 
 	/// Returns the number of peers allowed.
-	///
-	/// Keep in mind that `range.end` is *exclusive*.
-	pub fn num_peers_range(&self) -> Range<u32> {
-		let start = self.config.min_peers;
-		let end = self.config.max_peers + 1;
-		start .. end
+	pub fn num_peers_range(&self) -> RangeInclusive<u32> {
+		self.config.min_peers..=self.config.max_peers
 	}
 
 	/// Returns external url if available.
@@ -182,7 +184,7 @@ impl NetworkService {
 	}
 
 	/// Executes action in the network context
-	pub fn with_context<F>(&self, protocol: ProtocolId, action: F) where F: FnOnce(&NetworkContext) {
+	pub fn with_context<F>(&self, protocol: ProtocolId, action: F) where F: FnOnce(&dyn NetworkContext) {
 		let io = IoContext::new(self.io_service.channel(), 0);
 		let host = self.host.read();
 		if let Some(ref host) = host.as_ref() {
@@ -191,7 +193,7 @@ impl NetworkService {
 	}
 
 	/// Evaluates function in the network context
-	pub fn with_context_eval<F, T>(&self, protocol: ProtocolId, action: F) -> Option<T> where F: FnOnce(&NetworkContext) -> T {
+	pub fn with_context_eval<F, T>(&self, protocol: ProtocolId, action: F) -> Option<T> where F: FnOnce(&dyn NetworkContext) -> T {
 		let io = IoContext::new(self.io_service.channel(), 0);
 		let host = self.host.read();
 		host.as_ref().map(|ref host| host.with_context_eval(protocol, &io, action))

@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use compute::Light;
 use either::Either;
@@ -21,7 +21,7 @@ use memmap::MmapMut;
 use parking_lot::Mutex;
 use seed_compute::SeedHashCompute;
 
-use shared::{ETHASH_CACHE_ROUNDS, NODE_BYTES, NODE_DWORDS, Node, epoch, get_cache_size, to_hex};
+use shared::{ETHASH_CACHE_ROUNDS, NODE_BYTES, Node, epoch, get_cache_size, to_hex};
 
 use std::borrow::Cow;
 use std::fs;
@@ -30,19 +30,9 @@ use std::path::{Path, PathBuf};
 use std::slice;
 use std::sync::Arc;
 
+use common_types::engines::OptimizeFor;
+
 type Cache = Either<Vec<Node>, MmapMut>;
-
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
-pub enum OptimizeFor {
-	Cpu,
-	Memory,
-}
-
-impl Default for OptimizeFor {
-	fn default() -> Self {
-		OptimizeFor::Cpu
-	}
-}
 
 fn byte_size(cache: &Cache) -> usize {
 	use self::Either::{Left, Right};
@@ -69,6 +59,7 @@ pub struct NodeCacheBuilder {
 	// TODO: Remove this locking and just use an `Rc`?
 	seedhash: Arc<Mutex<SeedHashCompute>>,
 	optimize_for: OptimizeFor,
+	progpow_transition: u64,
 }
 
 // TODO: Abstract the "optimize for" logic
@@ -82,17 +73,18 @@ pub struct NodeCache {
 
 impl NodeCacheBuilder {
 	pub fn light(&self, cache_dir: &Path, block_number: u64) -> Light {
-		Light::new_with_builder(self, cache_dir, block_number)
+		Light::new_with_builder(self, cache_dir, block_number, self.progpow_transition)
 	}
 
 	pub fn light_from_file(&self, cache_dir: &Path, block_number: u64) -> io::Result<Light> {
-		Light::from_file_with_builder(self, cache_dir, block_number)
+		Light::from_file_with_builder(self, cache_dir, block_number, self.progpow_transition)
 	}
 
-	pub fn new<T: Into<Option<OptimizeFor>>>(optimize_for: T) -> Self {
+	pub fn new<T: Into<Option<OptimizeFor>>>(optimize_for: T, progpow_transition: u64) -> Self {
 		NodeCacheBuilder {
 			seedhash: Arc::new(Mutex::new(SeedHashCompute::default())),
 			optimize_for: optimize_for.into().unwrap_or_default(),
+			progpow_transition
 		}
 	}
 
@@ -325,11 +317,6 @@ unsafe fn initialize_memory(memory: *mut Node, num_nodes: usize, ident: &H256) {
 	// Now this is initialized, we can treat it as a slice.
 	let nodes: &mut [Node] = slice::from_raw_parts_mut(memory, num_nodes);
 
-	// For `unroll!`, see below. If the literal in `unroll!` is not the same as the RHS here then
-	// these have got out of sync! Don't let this happen!
-	debug_assert_eq!(NODE_DWORDS, 8);
-
-	// This _should_ get unrolled by the compiler, since it's not using the loop variable.
 	for _ in 0..ETHASH_CACHE_ROUNDS {
 		for i in 0..num_nodes {
 			let data_idx = (num_nodes - 1 + i) % num_nodes;
@@ -339,11 +326,8 @@ unsafe fn initialize_memory(memory: *mut Node, num_nodes: usize, ident: &H256) {
 				let mut data: Node = nodes.get_unchecked(data_idx).clone();
 				let rhs: &Node = nodes.get_unchecked(idx);
 
-				unroll! {
-					for w in 0..8 {
-						*data.as_dwords_mut().get_unchecked_mut(w) ^=
-							*rhs.as_dwords().get_unchecked(w);
-					}
+				for (a, b) in data.as_dwords_mut().iter_mut().zip(rhs.as_dwords()) {
+					*a ^= *b;
 				}
 
 				data

@@ -1,27 +1,28 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use account_utils::AccountProvider;
 use dir::default_data_path;
 use dir::helpers::replace_home;
-use ethcore::account_provider::AccountProvider;
 use ethcore::client::Client;
 use ethcore::miner::Miner;
-use ethkey::{Secret, Public};
+use ethkey::Password;
+use parity_crypto::publickey::{Secret, Public};
 use sync::SyncProvider;
 use ethereum_types::Address;
 use parity_runtime::Executor;
@@ -32,6 +33,7 @@ pub enum NodeSecretKey {
 	/// Stored as plain text in configuration file.
 	Plain(Secret),
 	/// Stored as account in key store.
+	#[cfg(feature = "accounts")]
 	KeyStore(Address),
 }
 
@@ -83,6 +85,8 @@ pub struct Configuration {
 	pub data_path: String,
 	/// Administrator public key.
 	pub admin_public: Option<Public>,
+	// Allowed CORS domains
+	pub cors: Option<Vec<String>>,
 }
 
 /// Secret store dependencies
@@ -90,7 +94,7 @@ pub struct Dependencies<'a> {
 	/// Blockchain client.
 	pub client: Arc<Client>,
 	/// Sync provider.
-	pub sync: Arc<SyncProvider>,
+	pub sync: Arc<dyn SyncProvider>,
 	/// Miner service.
 	pub miner: Arc<Miner>,
 	/// Account provider.
@@ -118,7 +122,7 @@ mod server {
 mod server {
 	use std::sync::Arc;
 	use ethcore_secretstore;
-	use ethkey::KeyPair;
+	use parity_crypto::publickey::KeyPair;
 	use ansi_term::Colour::{Red, White};
 	use db;
 	use super::{Configuration, Dependencies, NodeSecretKey, ContractAddress, Executor};
@@ -141,6 +145,7 @@ mod server {
 			let self_secret: Arc<ethcore_secretstore::NodeKeyPair> = match conf.self_secret.take() {
 				Some(NodeSecretKey::Plain(secret)) => Arc::new(ethcore_secretstore::PlainNodeKeyPair::new(
 					KeyPair::from_secret(secret).map_err(|e| format!("invalid secret: {}", e))?)),
+				#[cfg(feature = "accounts")]
 				Some(NodeSecretKey::KeyStore(account)) => {
 					// Check if account exists
 					if !deps.account_provider.has_account(account.clone()) {
@@ -193,6 +198,7 @@ mod server {
 					admin_public: conf.admin_public,
 					auto_migrate_enabled: conf.auto_migrate_enabled,
 				},
+				cors: conf.cors
 			};
 
 			cconf.cluster_config.nodes.insert(self_secret.public().clone(), cconf.cluster_config.listener_address.clone());
@@ -209,7 +215,6 @@ mod server {
 }
 
 pub use self::server::KeyServer;
-use ethkey::Password;
 
 impl Default for Configuration {
 	fn default() -> Self {
@@ -233,6 +238,7 @@ impl Default for Configuration {
 			http_interface: "127.0.0.1".to_owned(),
 			http_port: 8082,
 			data_path: replace_home(&data_dir, "$BASE/secretstore"),
+			cors: Some(vec![]),
 		}
 	}
 }

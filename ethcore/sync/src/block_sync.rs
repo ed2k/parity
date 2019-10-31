@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 ///
 /// Blockchain downloader
@@ -20,19 +20,29 @@
 
 use std::collections::{HashSet, VecDeque};
 use std::cmp;
-use heapsize::HeapSizeOf;
+
+use crate::{
+	blocks::{BlockCollection, SyncBody, SyncHeader},
+	chain::BlockSet,
+	sync_io::SyncIo
+};
+
 use ethereum_types::H256;
-use rlp::{self, Rlp};
-use ethcore::header::BlockNumber;
-use ethcore::client::{BlockStatus, BlockId};
-use ethcore::error::{ImportErrorKind, QueueErrorKind, BlockError, Error as EthcoreError, ErrorKind as EthcoreErrorKind};
-use sync_io::SyncIo;
-use blocks::{BlockCollection, SyncBody, SyncHeader};
-use chain::BlockSet;
+use log::{debug, trace};
+use network::{client_version::ClientCapabilities, PeerId};
+use rlp::Rlp;
+use parity_util_mem::MallocSizeOf;
+use common_types::{
+	BlockNumber,
+	block_status::BlockStatus,
+	ids::BlockId,
+	errors::{EthcoreError, BlockError, ImportError},
+};
 
 const MAX_HEADERS_TO_REQUEST: usize = 128;
-const MAX_BODIES_TO_REQUEST: usize = 32;
-const MAX_RECEPITS_TO_REQUEST: usize = 128;
+const MAX_BODIES_TO_REQUEST_LARGE: usize = 128;
+const MAX_BODIES_TO_REQUEST_SMALL: usize = 32; // Size request for parity clients prior to 2.4.0
+const MAX_RECEPITS_TO_REQUEST: usize = 256;
 const SUBCHAIN_SIZE: u64 = 256;
 const MAX_ROUND_PARENTS: usize = 16;
 const MAX_PARALLEL_SUBCHAIN_DOWNLOAD: usize = 5;
@@ -57,7 +67,7 @@ macro_rules! debug_sync {
 	};
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, MallocSizeOf)]
 /// Downloader state
 pub enum State {
 	/// No active downloads.
@@ -110,6 +120,7 @@ impl From<rlp::DecoderError> for BlockDownloaderImportError {
 
 /// Block downloader strategy.
 /// Manages state and block data for a block download process.
+#[derive(MallocSizeOf)]
 pub struct BlockDownloader {
 	/// Which set of blocks to download
 	block_set: BlockSet,
@@ -220,18 +231,13 @@ impl BlockDownloader {
 		self.state = State::Blocks;
 	}
 
-	/// Returns used heap memory size.
-	pub fn heap_size(&self) -> usize {
-		self.blocks.heap_size() + self.round_parents.heap_size_of_children()
-	}
-
 	/// Returns best imported block number.
 	pub fn last_imported_block_number(&self) -> BlockNumber {
 		self.last_imported_block
 	}
 
 	/// Add new block headers.
-	pub fn import_headers(&mut self, io: &mut SyncIo, r: &Rlp, expected_hash: H256) -> Result<DownloadAction, BlockDownloaderImportError> {
+	pub fn import_headers(&mut self, io: &mut dyn SyncIo, r: &Rlp, expected_hash: H256) -> Result<DownloadAction, BlockDownloaderImportError> {
 		let item_count = r.item_count().unwrap_or(0);
 		if self.state == State::Idle {
 			trace_sync!(self, "Ignored unexpected block headers");
@@ -416,7 +422,7 @@ impl BlockDownloader {
 		Ok(())
 	}
 
-	fn start_sync_round(&mut self, io: &mut SyncIo) {
+	fn start_sync_round(&mut self, io: &mut dyn SyncIo) {
 		self.state = State::ChainHead;
 		trace_sync!(self, "Starting round (last imported count = {:?}, last started = {}, block = {:?}", self.imported_this_round, self.last_round_start, self.last_imported_block);
 		// Check if need to retract to find the common block. The problem is that the peers still return headers by hash even
@@ -464,12 +470,12 @@ impl BlockDownloader {
 	}
 
 	/// Find some headers or blocks to download for a peer.
-	pub fn request_blocks(&mut self, io: &mut SyncIo, num_active_peers: usize) -> Option<BlockRequest> {
+	pub fn request_blocks(&mut self, peer_id: PeerId, io: &mut dyn SyncIo, num_active_peers: usize) -> Option<BlockRequest> {
 		match self.state {
 			State::Idle => {
 				self.start_sync_round(io);
 				if self.state == State::ChainHead {
-					return self.request_blocks(io, num_active_peers);
+					return self.request_blocks(peer_id, io, num_active_peers);
 				}
 			},
 			State::ChainHead => {
@@ -487,7 +493,15 @@ impl BlockDownloader {
 			},
 			State::Blocks => {
 				// check to see if we need to download any block bodies first
-				let needed_bodies = self.blocks.needed_bodies(MAX_BODIES_TO_REQUEST, false);
+				let client_version = io.peer_version(peer_id);
+
+				let number_of_bodies_to_request = if client_version.can_handle_large_requests() {
+					MAX_BODIES_TO_REQUEST_LARGE
+				} else {
+					MAX_BODIES_TO_REQUEST_SMALL
+				};
+
+				let needed_bodies = self.blocks.needed_bodies(number_of_bodies_to_request, false);
 				if !needed_bodies.is_empty() {
 					return Some(BlockRequest::Bodies {
 						hashes: needed_bodies,
@@ -519,7 +533,7 @@ impl BlockDownloader {
 
 	/// Checks if there are blocks fully downloaded that can be imported into the blockchain and does the import.
 	/// Returns DownloadAction::Reset if it is imported all the the blocks it can and all downloading peers should be reset
-	pub fn collect_blocks(&mut self, io: &mut SyncIo, allow_out_of_order: bool) -> DownloadAction {
+	pub fn collect_blocks(&mut self, io: &mut dyn SyncIo, allow_out_of_order: bool) -> DownloadAction {
 		let mut download_action = DownloadAction::None;
 		let mut imported = HashSet::new();
 		let blocks = self.blocks.drain();
@@ -541,15 +555,21 @@ impl BlockDownloader {
 			let result = if let Some(receipts) = receipts {
 				io.chain().queue_ancient_block(block, receipts)
 			} else {
+				trace_sync!(self, "Importing block #{}/{}", number, h);
 				io.chain().import_block(block)
 			};
 
 			match result {
-				Err(EthcoreError(EthcoreErrorKind::Import(ImportErrorKind::AlreadyInChain), _)) => {
-					trace_sync!(self, "Block already in chain {:?}", h);
+				Err(EthcoreError::Import(ImportError::AlreadyInChain)) => {
+					let is_canonical = if io.chain().block_hash(BlockId::Number(number)).is_some() {
+						"canoncial"
+					} else {
+						"not canonical"
+					};
+					trace_sync!(self, "Block #{} is already in chain {:?} – {}", number, h, is_canonical);
 					self.block_imported(&h, number, &parent);
 				},
-				Err(EthcoreError(EthcoreErrorKind::Import(ImportErrorKind::AlreadyQueued), _)) => {
+				Err(EthcoreError::Import(ImportError::AlreadyQueued)) => {
 					trace_sync!(self, "Block already queued {:?}", h);
 					self.block_imported(&h, number, &parent);
 				},
@@ -558,18 +578,18 @@ impl BlockDownloader {
 					imported.insert(h.clone());
 					self.block_imported(&h, number, &parent);
 				},
-				Err(EthcoreError(EthcoreErrorKind::Block(BlockError::UnknownParent(_)), _)) if allow_out_of_order => {
+				Err(EthcoreError::Block(BlockError::UnknownParent(_))) if allow_out_of_order => {
 					break;
 				},
-				Err(EthcoreError(EthcoreErrorKind::Block(BlockError::UnknownParent(_)), _)) => {
+				Err(EthcoreError::Block(BlockError::UnknownParent(_))) => {
 					trace_sync!(self, "Unknown new block parent, restarting sync");
 					break;
 				},
-				Err(EthcoreError(EthcoreErrorKind::Block(BlockError::TemporarilyInvalid(_)), _)) => {
+				Err(EthcoreError::Block(BlockError::TemporarilyInvalid(_))) => {
 					debug_sync!(self, "Block temporarily invalid: {:?}, restarting sync", h);
 					break;
 				},
-				Err(EthcoreError(EthcoreErrorKind::Queue(QueueErrorKind::Full(limit)), _)) => {
+				Err(EthcoreError::FullQueue(limit)) => {
 					debug_sync!(self, "Block import queue full ({}), restarting sync", limit);
 					download_action = DownloadAction::Reset;
 					break;
@@ -619,18 +639,23 @@ fn all_expected<A, B, F>(values: &[A], expected_values: &[B], is_expected: F) ->
 
 #[cfg(test)]
 mod tests {
-	use super::*;
-	use ethcore::client::TestBlockChainClient;
-	use ethcore::header::Header as BlockHeader;
-	use ethcore::spec::Spec;
-	use ethkey::{Generator,Random};
-	use hash::keccak;
+	use super::{
+		BlockSet, BlockDownloader, BlockDownloaderImportError, DownloadAction, SyncIo, H256,
+		MAX_HEADERS_TO_REQUEST, MAX_USELESS_HEADERS_PER_ROUND, SUBCHAIN_SIZE, State, Rlp, VecDeque
+	};
+
+	use crate::tests::{helpers::TestIo, snapshot::TestSnapshotService};
+
+	use ethcore::test_helpers::TestBlockChainClient;
+	use parity_crypto::publickey::{Random, Generator};
+	use keccak_hash::keccak;
 	use parking_lot::RwLock;
-	use rlp::{encode_list,RlpStream};
-	use tests::helpers::TestIo;
-	use tests::snapshot::TestSnapshotService;
-	use transaction::{Transaction,SignedTransaction};
+	use rlp::{encode_list, RlpStream};
 	use triehash_ethereum::ordered_trie_root;
+	use common_types::{
+		transaction::{Transaction, SignedTransaction},
+		header::Header as BlockHeader,
+	};
 
 	fn dummy_header(number: u64, parent_hash: H256) -> BlockHeader {
 		let mut header = BlockHeader::new();
@@ -648,7 +673,7 @@ mod tests {
 		Transaction::default().sign(keypair.secret(), None)
 	}
 
-	fn import_headers(headers: &[BlockHeader], downloader: &mut BlockDownloader, io: &mut SyncIo) -> Result<DownloadAction, BlockDownloaderImportError> {
+	fn import_headers(headers: &[BlockHeader], downloader: &mut BlockDownloader, io: &mut dyn SyncIo) -> Result<DownloadAction, BlockDownloaderImportError> {
 		let mut stream = RlpStream::new();
 		stream.append_list(headers);
 		let bytes = stream.out();
@@ -657,16 +682,16 @@ mod tests {
 		downloader.import_headers(io, &rlp, expected_hash)
 	}
 
-	fn import_headers_ok(headers: &[BlockHeader], downloader: &mut BlockDownloader, io: &mut SyncIo) {
+	fn import_headers_ok(headers: &[BlockHeader], downloader: &mut BlockDownloader, io: &mut dyn SyncIo) {
 		let res = import_headers(headers, downloader, io);
 		assert!(res.is_ok());
 	}
 
 	#[test]
 	fn import_headers_in_chain_head_state() {
-		::env_logger::try_init().ok();
+		env_logger::try_init().ok();
 
-		let spec = Spec::new_test();
+		let spec = spec::new_test();
 		let genesis_hash = spec.genesis_header().hash();
 
 		let mut downloader = BlockDownloader::new(BlockSet::NewBlocks, &genesis_hash, 0);
@@ -675,7 +700,7 @@ mod tests {
 		let mut chain = TestBlockChainClient::new();
 		let snapshot_service = TestSnapshotService::new();
 		let queue = RwLock::new(VecDeque::new());
-		let mut io = TestIo::new(&mut chain, &snapshot_service, &queue, None);
+		let mut io = TestIo::new(&mut chain, &snapshot_service, &queue, None, None);
 
 		// Valid headers sequence.
 		let valid_headers = [
@@ -736,12 +761,12 @@ mod tests {
 
 	#[test]
 	fn import_headers_in_blocks_state() {
-		::env_logger::try_init().ok();
+		env_logger::try_init().ok();
 
 		let mut chain = TestBlockChainClient::new();
 		let snapshot_service = TestSnapshotService::new();
 		let queue = RwLock::new(VecDeque::new());
-		let mut io = TestIo::new(&mut chain, &snapshot_service, &queue, None);
+		let mut io = TestIo::new(&mut chain, &snapshot_service, &queue, None, None);
 
 		let mut headers = Vec::with_capacity(3);
 		let parent_hash = H256::random();
@@ -786,12 +811,12 @@ mod tests {
 
 	#[test]
 	fn import_bodies() {
-		::env_logger::try_init().ok();
+		env_logger::try_init().ok();
 
 		let mut chain = TestBlockChainClient::new();
 		let snapshot_service = TestSnapshotService::new();
 		let queue = RwLock::new(VecDeque::new());
-		let mut io = TestIo::new(&mut chain, &snapshot_service, &queue, None);
+		let mut io = TestIo::new(&mut chain, &snapshot_service, &queue, None, None);
 
 		// Import block headers.
 		let mut headers = Vec::with_capacity(4);
@@ -799,13 +824,13 @@ mod tests {
 		let mut parent_hash = H256::zero();
 		for i in 0..4 {
 			// Construct the block body
-			let mut uncles = if i > 0 {
+			let uncles = if i > 0 {
 				encode_list(&[dummy_header(i - 1, H256::random())])
 			} else {
 				::rlp::EMPTY_LIST_RLP.to_vec()
 			};
 
-			let mut txs = encode_list(&[dummy_signed_tx()]);
+			let txs = encode_list(&[dummy_signed_tx()]);
 			let tx_root = ordered_trie_root(Rlp::new(&txs).iter().map(|r| r.as_raw()));
 
 			let mut rlp = RlpStream::new_list(2);
@@ -854,12 +879,12 @@ mod tests {
 
 	#[test]
 	fn import_receipts() {
-		::env_logger::try_init().ok();
+		env_logger::try_init().ok();
 
 		let mut chain = TestBlockChainClient::new();
 		let snapshot_service = TestSnapshotService::new();
 		let queue = RwLock::new(VecDeque::new());
-		let mut io = TestIo::new(&mut chain, &snapshot_service, &queue, None);
+		let mut io = TestIo::new(&mut chain, &snapshot_service, &queue, None, None);
 
 		// Import block headers.
 		let mut headers = Vec::with_capacity(4);
@@ -870,7 +895,7 @@ mod tests {
 			//
 			// The RLP-encoded integers are clearly not receipts, but the BlockDownloader treats
 			// all receipts as byte blobs, so it does not matter.
-			let mut receipts_rlp = if i < 2 {
+			let receipts_rlp = if i < 2 {
 				encode_list(&[0u32])
 			} else {
 				encode_list(&[i as u32])
@@ -913,9 +938,9 @@ mod tests {
 
 	#[test]
 	fn reset_after_multiple_sets_of_useless_headers() {
-		::env_logger::try_init().ok();
+		env_logger::try_init().ok();
 
-		let spec = Spec::new_test();
+		let spec = spec::new_test();
 		let genesis_hash = spec.genesis_header().hash();
 
 		let mut downloader = BlockDownloader::new(BlockSet::NewBlocks, &genesis_hash, 0);
@@ -924,7 +949,7 @@ mod tests {
 		let mut chain = TestBlockChainClient::new();
 		let snapshot_service = TestSnapshotService::new();
 		let queue = RwLock::new(VecDeque::new());
-		let mut io = TestIo::new(&mut chain, &snapshot_service, &queue, None);
+		let mut io = TestIo::new(&mut chain, &snapshot_service, &queue, None, None);
 
 		let heads = [
 			spec.genesis_header(),
@@ -953,9 +978,9 @@ mod tests {
 
 	#[test]
 	fn dont_reset_after_multiple_sets_of_useless_headers_for_chain_head() {
-		::env_logger::try_init().ok();
+		env_logger::try_init().ok();
 
-		let spec = Spec::new_test();
+		let spec = spec::new_test();
 		let genesis_hash = spec.genesis_header().hash();
 
 		let mut downloader = BlockDownloader::new(BlockSet::NewBlocks, &genesis_hash, 0);
@@ -964,7 +989,7 @@ mod tests {
 		let mut chain = TestBlockChainClient::new();
 		let snapshot_service = TestSnapshotService::new();
 		let queue = RwLock::new(VecDeque::new());
-		let mut io = TestIo::new(&mut chain, &snapshot_service, &queue, None);
+		let mut io = TestIo::new(&mut chain, &snapshot_service, &queue, None, None);
 
 		let heads = [
 			spec.genesis_header()

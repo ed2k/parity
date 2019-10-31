@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Interface for Evm externalities.
 
@@ -91,12 +91,13 @@ pub trait Ext {
 
 	/// Creates new contract.
 	///
-	/// Returns gas_left and contract address if contract creation was succesfull.
+	/// Returns gas_left and contract address if contract creation was successful.
 	fn create(
 		&mut self,
 		gas: &U256,
 		value: &U256,
 		code: &[u8],
+		parent_version: &U256,
 		address: CreateContractAddress,
 		trap: bool,
 	) -> ::std::result::Result<ContractCreateResult, TrapKind>;
@@ -144,6 +145,9 @@ pub trait Ext {
 	/// Returns environment info.
 	fn env_info(&self) -> &EnvInfo;
 
+	/// Returns the chain ID of the blockchain
+	fn chain_id(&self) -> u64;
+
 	/// Returns current depth of execution.
 	///
 	/// If contract A calls contract B, and contract B calls C,
@@ -160,7 +164,11 @@ pub trait Ext {
 	fn trace_next_instruction(&mut self, _pc: usize, _instruction: u8, _current_gas: U256) -> bool { false }
 
 	/// Prepare to trace an operation. Passthrough for the VM trace.
+	/// For each call of `trace_prepare_execute` either `trace_failed` or `trace_executed` MUST be called.
 	fn trace_prepare_execute(&mut self, _pc: usize, _instruction: u8, _gas_cost: U256, _mem_written: Option<(usize, usize)>, _store_written: Option<(U256, U256)>) {}
+
+	/// Trace the execution failure of a single instruction.
+	fn trace_failed(&mut self) {}
 
 	/// Trace the finalised execution of a single instruction.
 	fn trace_executed(&mut self, _gas_used: U256, _stack_push: &[U256], _mem: &[u8]) {}

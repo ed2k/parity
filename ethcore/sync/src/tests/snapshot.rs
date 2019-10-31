@@ -1,61 +1,62 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use hash::keccak;
-use ethereum_types::H256;
-use parking_lot::Mutex;
-use bytes::Bytes;
-use ethcore::snapshot::{SnapshotService, ManifestData, RestorationStatus};
-use ethcore::header::BlockNumber;
-use ethcore::client::EachBlockWith;
-use super::helpers::*;
-use {SyncConfig, WarpSync};
 
+use crate::{
+	api::{SyncConfig, WarpSync},
+	tests::helpers::TestNet
+};
+
+use bytes::Bytes;
+use ethcore::test_helpers::EachBlockWith;
+use ethereum_types::H256;
+use keccak_hash::keccak;
+use parking_lot::Mutex;
+use snapshot::SnapshotService;
+use common_types::{
+	BlockNumber,
+	snapshot::{ManifestData, RestorationStatus},
+};
+
+#[derive(Default)]
 pub struct TestSnapshotService {
 	manifest: Option<ManifestData>,
 	chunks: HashMap<H256, Bytes>,
-
 	restoration_manifest: Mutex<Option<ManifestData>>,
 	state_restoration_chunks: Mutex<HashMap<H256, Bytes>>,
 	block_restoration_chunks: Mutex<HashMap<H256, Bytes>>,
 }
 
 impl TestSnapshotService {
-	pub fn new() -> TestSnapshotService {
-		TestSnapshotService {
-			manifest: None,
-			chunks: HashMap::new(),
-			restoration_manifest: Mutex::new(None),
-			state_restoration_chunks: Mutex::new(HashMap::new()),
-			block_restoration_chunks: Mutex::new(HashMap::new()),
-		}
+	pub fn new() -> Self {
+		Default::default()
 	}
 
 	pub fn new_with_snapshot(num_chunks: usize, block_hash: H256, block_number: BlockNumber) -> TestSnapshotService {
 		let num_state_chunks = num_chunks / 2;
 		let num_block_chunks = num_chunks - num_state_chunks;
-		let state_chunks: Vec<Bytes> = (0..num_state_chunks).map(|_| H256::random().to_vec()).collect();
-		let block_chunks: Vec<Bytes> = (0..num_block_chunks).map(|_| H256::random().to_vec()).collect();
+		let state_chunks: Vec<Bytes> = (0..num_state_chunks).map(|_| H256::random().as_bytes().to_vec()).collect();
+		let block_chunks: Vec<Bytes> = (0..num_block_chunks).map(|_| H256::random().as_bytes().to_vec()).collect();
 		let manifest = ManifestData {
 			version: 2,
 			state_hashes: state_chunks.iter().map(|data| keccak(data)).collect(),
 			block_hashes: block_chunks.iter().map(|data| keccak(data)).collect(),
-			state_root: H256::new(),
+			state_root: H256::zero(),
 			block_number: block_number,
 			block_hash: block_hash,
 		};
@@ -122,6 +123,8 @@ impl SnapshotService for TestSnapshotService {
 		self.block_restoration_chunks.lock().clear();
 	}
 
+	fn abort_snapshot(&self) {}
+
 	fn restore_state_chunk(&self, hash: H256, chunk: Bytes) {
 		if self.restoration_manifest.lock().as_ref().map_or(false, |m| m.state_hashes.iter().any(|h| h == &hash)) {
 			self.state_restoration_chunks.lock().insert(hash, chunk);
@@ -145,7 +148,7 @@ fn snapshot_sync() {
 	let mut config = SyncConfig::default();
 	config.warp_sync = WarpSync::Enabled;
 	let mut net = TestNet::new_with_config(5, config);
-	let snapshot_service = Arc::new(TestSnapshotService::new_with_snapshot(16, H256::new(), 500000));
+	let snapshot_service = Arc::new(TestSnapshotService::new_with_snapshot(16, H256::zero(), 500000));
 	for i in 0..4 {
 		net.peer_mut(i).snapshot_service = snapshot_service.clone();
 		net.peer(i).chain.add_blocks(1, EachBlockWith::Nothing);

@@ -1,27 +1,29 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::io;
 use std::io::{Write, BufReader, BufRead};
 use std::time::Duration;
 use std::fs::File;
-use ethereum_types::{U256, clean_0x, Address};
+use std::collections::HashSet;
+use ethereum_types::{U256, Address};
 use journaldb::Algorithm;
-use ethcore::client::{Mode, BlockId, VMType, DatabaseCompactionProfile, ClientConfig, VerifierType};
+use ethcore::client::{VMType, DatabaseCompactionProfile, ClientConfig};
 use ethcore::miner::{PendingSet, Penalization};
+use verification::VerifierType;
 use miner::pool::PrioritizationStrategy;
 use cache::CacheConfig;
 use dir::DatabaseDirectories;
@@ -31,9 +33,22 @@ use sync::{validate_node_url, self};
 use db::migrate;
 use path;
 use ethkey::Password;
+use types::{
+	ids::BlockId,
+	client_types::Mode,
+};
 
 pub fn to_duration(s: &str) -> Result<Duration, String> {
 	to_seconds(s).map(Duration::from_secs)
+}
+
+// TODO: should we bring it back to ethereum-types?
+fn clean_0x(s: &str) -> &str {
+	if s.starts_with("0x") {
+		&s[2..]
+	} else {
+		s
+	}
 }
 
 fn to_seconds(s: &str) -> Result<u64, String> {
@@ -116,7 +131,7 @@ pub fn to_queue_penalization(time: Option<u64>) -> Result<Penalization, String> 
 pub fn to_address(s: Option<String>) -> Result<Address, String> {
 	match s {
 		Some(ref a) => clean_0x(a).parse().map_err(|_| format!("Invalid address: {:?}", a)),
-		None => Ok(Address::default())
+		None => Ok(Address::zero())
 	}
 }
 
@@ -132,6 +147,13 @@ pub fn to_addresses(s: &Option<String>) -> Result<Vec<Address>, String> {
 /// Tries to parse string as a price.
 pub fn to_price(s: &str) -> Result<f32, String> {
 	s.parse::<f32>().map_err(|_| format!("Invalid transaciton price 's' given. Must be a decimal number."))
+}
+
+pub fn join_set(set: Option<&HashSet<String>>) -> Option<String> {
+	match set {
+		Some(s) => Some(s.iter().map(|s| s.as_str()).collect::<Vec<&str>>().join(",")),
+		None => None
+	}
 }
 
 /// Flush output buffer.
@@ -169,7 +191,7 @@ pub fn to_bootnodes(bootnodes: &Option<String>) -> Result<Vec<String>, String> {
 		Some(ref x) if !x.is_empty() => x.split(',').map(|s| {
 			match validate_node_url(s).map(Into::into) {
 				None => Ok(s.to_owned()),
-				Some(sync::ErrorKind::AddressResolve(_)) => Err(format!("Failed to resolve hostname of a boot node: {}", s)),
+				Some(sync::Error::AddressResolve(_)) => Err(format!("Failed to resolve hostname of a boot node: {}", s)),
 				Some(_) => Err(format!("Invalid node address format given for a boot node: {}", s)),
 			}
 		}).collect(),
@@ -327,12 +349,16 @@ mod tests {
 	use std::time::Duration;
 	use std::fs::File;
 	use std::io::Write;
+	use std::collections::HashSet;
 	use tempdir::TempDir;
 	use ethereum_types::U256;
-	use ethcore::client::{Mode, BlockId};
 	use ethcore::miner::PendingSet;
 	use ethkey::Password;
-	use super::{to_duration, to_mode, to_block_id, to_u256, to_pending_set, to_address, to_addresses, to_price, geth_ipc_path, to_bootnodes, password_from_file};
+	use types::{
+		ids::BlockId,
+		client_types::Mode,
+	};
+	use super::{to_duration, to_mode, to_block_id, to_u256, to_pending_set, to_address, to_addresses, to_price, geth_ipc_path, to_bootnodes, join_set, password_from_file};
 
 	#[test]
 	fn test_to_duration() {
@@ -471,5 +497,21 @@ but the first password is trimmed
 		assert_eq!(to_bootnodes(&None), Ok(vec![]));
 		assert_eq!(to_bootnodes(&Some(one_bootnode.into())), Ok(vec![one_bootnode.into()]));
 		assert_eq!(to_bootnodes(&Some(two_bootnodes.into())), Ok(vec![one_bootnode.into(), one_bootnode.into()]));
+	}
+
+	#[test]
+	fn test_join_set() {
+		let mut test_set = HashSet::new();
+		test_set.insert("0x1111111111111111111111111111111111111111".to_string());
+		test_set.insert("0x0000000000000000000000000000000000000000".to_string());
+
+
+		let res = join_set(Some(&test_set)).unwrap();
+
+		assert!(
+			res == "0x1111111111111111111111111111111111111111,0x0000000000000000000000000000000000000000"
+			||
+			res == "0x0000000000000000000000000000000000000000,0x1111111111111111111111111111111111111111"
+		);
 	}
 }

@@ -1,25 +1,25 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Network and general IO module.
 //!
 //! Example usage for creating a network service and adding an IO handler:
 //!
 //! ```rust
-//! extern crate ethcore_network as net;
+//! extern crate network as net;
 //! extern crate ethcore_network_devp2p as devp2p;
 //! use net::*;
 //! use devp2p::NetworkService;
@@ -60,43 +60,10 @@
 //TODO: use Poll from mio
 #![allow(deprecated)]
 
-extern crate ethcore_io as io;
-extern crate parity_bytes;
-extern crate parity_crypto as crypto;
-extern crate ethereum_types;
-extern crate parking_lot;
-extern crate mio;
-extern crate tiny_keccak;
-extern crate crypto as rcrypto;
-extern crate rand;
-extern crate ansi_term; //TODO: remove this
-extern crate rustc_hex;
-extern crate igd;
-extern crate libc;
-extern crate slab;
-extern crate ethkey;
-extern crate rlp;
-extern crate bytes;
-extern crate parity_path;
-extern crate ethcore_logger;
-extern crate ethcore_network as network;
-extern crate ipnetwork;
-extern crate keccak_hash as hash;
-extern crate serde;
-extern crate serde_json;
-extern crate parity_snappy as snappy;
-
-#[macro_use]
-extern crate error_chain;
-#[macro_use]
-extern crate log;
-#[macro_use]
-extern crate serde_derive;
-
-#[cfg(test)]
-extern crate tempdir;
-#[cfg(test)] #[macro_use]
-extern crate assert_matches;
+pub use ethcore_io::TimerToken;
+pub use host::NetworkContext;
+pub use node_table::{MAX_NODES_IN_TABLE, NodeId, validate_node_url};
+pub use service::NetworkService;
 
 mod host;
 mod connection;
@@ -106,11 +73,5 @@ mod discovery;
 mod service;
 mod node_table;
 mod ip_utils;
-
-pub use service::NetworkService;
-pub use host::NetworkContext;
-
-pub use io::TimerToken;
-pub use node_table::{validate_node_url, NodeId};
 
 const PROTOCOL_VERSION: u32 = 5;

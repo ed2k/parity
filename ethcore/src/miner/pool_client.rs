@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Blockchain access for transaction pool.
 
@@ -23,21 +23,26 @@ use std::{
 };
 
 use ethereum_types::{H256, U256, Address};
+use ethcore_miner::local_accounts::LocalAccounts;
 use ethcore_miner::pool;
 use ethcore_miner::pool::client::NonceClient;
-use transaction::{
+use ethcore_miner::service_transaction_checker::ServiceTransactionChecker;
+use types::transaction::{
 	self,
 	UnverifiedTransaction,
 	SignedTransaction,
 };
+use types::{
+	header::Header,
+	ids::TransactionId,
+};
 use parking_lot::RwLock;
 
-use account_provider::AccountProvider;
-use client::{TransactionId, BlockInfo, CallContract, Nonce};
-use engines::EthEngine;
-use header::Header;
+use call_contract::CallContract;
+use client_traits::{BlockInfo, Nonce};
+use engine::Engine;
+use machine::transaction_ext::Transaction;
 use miner;
-use miner::service_transaction_checker::ServiceTransactionChecker;
 
 /// Cache for state nonces.
 #[derive(Debug, Clone)]
@@ -70,10 +75,10 @@ impl NonceCache {
 pub struct PoolClient<'a, C: 'a> {
 	chain: &'a C,
 	cached_nonces: CachedNonceClient<'a, C>,
-	engine: &'a EthEngine,
-	accounts: Option<&'a AccountProvider>,
+	engine: &'a dyn Engine,
+	accounts: &'a dyn LocalAccounts,
 	best_block_header: Header,
-	service_transaction_checker: Option<ServiceTransactionChecker>,
+	service_transaction_checker: Option<&'a ServiceTransactionChecker>,
 }
 
 impl<'a, C: 'a> Clone for PoolClient<'a, C> {
@@ -90,15 +95,15 @@ impl<'a, C: 'a> Clone for PoolClient<'a, C> {
 }
 
 impl<'a, C: 'a> PoolClient<'a, C> where
-C: BlockInfo + CallContract,
+	C: BlockInfo + CallContract,
 {
 	/// Creates new client given chain, nonce cache, accounts and service transaction verifier.
 	pub fn new(
 		chain: &'a C,
 		cache: &'a NonceCache,
-		engine: &'a EthEngine,
-		accounts: Option<&'a AccountProvider>,
-		refuse_service_transactions: bool,
+		engine: &'a dyn Engine,
+		accounts: &'a dyn LocalAccounts,
+		service_transaction_checker: Option<&'a ServiceTransactionChecker>,
 	) -> Self {
 		let best_block_header = chain.best_block_header();
 		PoolClient {
@@ -107,19 +112,17 @@ C: BlockInfo + CallContract,
 			engine,
 			accounts,
 			best_block_header,
-			service_transaction_checker: if refuse_service_transactions {
-				None
-			} else {
-				Some(Default::default())
-			},
+			service_transaction_checker,
 		}
 	}
 
-	/// Verifies if signed transaction is executable.
+	/// Verifies transaction against its block (before its import into this block)
+	/// Also Verifies if signed transaction is executable.
 	///
 	/// This should perform any verifications that rely on chain status.
-	pub fn verify_signed(&self, tx: &SignedTransaction) -> Result<(), transaction::Error> {
-		self.engine.machine().verify_transaction(&tx, &self.best_block_header, self.chain)
+	pub fn verify_for_pending_block(&self, tx: &SignedTransaction, header: &Header) -> Result<(), transaction::Error> {
+		self.engine.machine().verify_transaction_basic(tx, header)?;
+		self.engine.machine().verify_transaction(tx, &self.best_block_header, self.chain)
 	}
 }
 
@@ -138,10 +141,9 @@ impl<'a, C: 'a> pool::client::Client for PoolClient<'a, C> where
 
 	fn verify_transaction(&self, tx: UnverifiedTransaction)-> Result<SignedTransaction, transaction::Error> {
 		self.engine.verify_transaction_basic(&tx, &self.best_block_header)?;
-		let tx = self.engine.verify_transaction_unordered(tx, &self.best_block_header)?;
+		let tx = tx.verify_unordered()?;
 
-		self.verify_signed(&tx)?;
-
+		self.engine.machine().verify_transaction(&tx, &self.best_block_header, self.chain)?;
 		Ok(tx)
 	}
 
@@ -149,7 +151,7 @@ impl<'a, C: 'a> pool::client::Client for PoolClient<'a, C> where
 		pool::client::AccountDetails {
 			nonce: self.cached_nonces.account_nonce(address),
 			balance: self.chain.latest_balance(address),
-			is_local: self.accounts.map_or(false, |accounts| accounts.has_account(*address)),
+			is_local: self.accounts.is_local(address),
 		}
 	}
 
@@ -219,30 +221,30 @@ impl<'a, C: 'a> CachedNonceClient<'a, C> {
 impl<'a, C: 'a> NonceClient for CachedNonceClient<'a, C> where
 	C: Nonce + Sync,
 {
-  fn account_nonce(&self, address: &Address) -> U256 {
-	  if let Some(nonce) = self.cache.nonces.read().get(address) {
-		  return *nonce;
-	  }
+	fn account_nonce(&self, address: &Address) -> U256 {
+		if let Some(nonce) = self.cache.nonces.read().get(address) {
+			return *nonce;
+		}
 
-	  // We don't check again if cache has been populated.
-	  // It's not THAT expensive to fetch the nonce from state.
-	  let mut cache = self.cache.nonces.write();
-	  let nonce = self.client.latest_nonce(address);
-	  cache.insert(*address, nonce);
+		// We don't check again if cache has been populated.
+		// It's not THAT expensive to fetch the nonce from state.
+		let mut cache = self.cache.nonces.write();
+		let nonce = self.client.latest_nonce(address);
+		cache.insert(*address, nonce);
 
-	  if cache.len() < self.cache.limit {
-		  return nonce
-	  }
+		if cache.len() < self.cache.limit {
+			return nonce
+		}
 
-	  debug!(target: "txpool", "NonceCache: reached limit.");
-	  trace_time!("nonce_cache:clear");
+		debug!(target: "txpool", "NonceCache: reached limit.");
+		trace_time!("nonce_cache:clear");
 
-	  // Remove excessive amount of entries from the cache
-	  let to_remove: Vec<_> = cache.keys().take(self.cache.limit / 2).cloned().collect();
-	  for x in to_remove {
-		cache.remove(&x);
-	  }
+		// Remove excessive amount of entries from the cache
+		let to_remove: Vec<_> = cache.keys().take(self.cache.limit / 2).cloned().collect();
+		for x in to_remove {
+			cache.remove(&x);
+		}
 
-	  nonce
-  }
+		nonce
+	}
 }

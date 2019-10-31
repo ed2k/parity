@@ -1,44 +1,39 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
+
+use std::path::Path;
 
 use ethjson;
 use trie::{TrieFactory, TrieSpec};
-use ethtrie::RlpCodec;
 use ethereum_types::H256;
-use memorydb::MemoryDB;
-use keccak_hasher::KeccakHasher;
-use kvdb::DBValue;
 
 use super::HookType;
 
-pub use self::generic::run_test_path as run_generic_test_path;
-pub use self::generic::run_test_file as run_generic_test_file;
-pub use self::secure::run_test_path as run_secure_test_path;
-pub use self::secure::run_test_file as run_secure_test_file;
-
-fn test_trie<H: FnMut(&str, HookType)>(json: &[u8], trie: TrieSpec, start_stop_hook: &mut H) -> Vec<String> {
-	let tests = ethjson::trie::Test::load(json).unwrap();
-	let factory = TrieFactory::<_, RlpCodec>::new(trie);
+#[allow(dead_code)]
+fn test_trie<H: FnMut(&str, HookType)>(path: &Path, json: &[u8], trie: TrieSpec, start_stop_hook: &mut H) -> Vec<String> {
+	let tests = ethjson::test_helpers::trie::Test::load(json)
+		.expect(&format!("Could not parse JSON trie test data from {}", path.display()));
+	let factory = TrieFactory::new(trie, ethtrie::Layout);
 	let mut result = vec![];
 
 	for (name, test) in tests.into_iter() {
 		start_stop_hook(&name, HookType::OnStart);
 
-		let mut memdb = MemoryDB::<KeccakHasher, DBValue>::new();
-		let mut root = H256::default();
+		let mut memdb = journaldb::new_memory_db();
+		let mut root = H256::zero();
 		let mut t = factory.create(&mut memdb, &mut root);
 
 		for (key, value) in test.input.data.into_iter() {
@@ -68,18 +63,9 @@ mod generic {
 
 	use super::HookType;
 
-	/// Run generic trie jsontests on a given folder.
-	pub fn run_test_path<H: FnMut(&str, HookType)>(p: &Path, skip: &[&'static str], h: &mut H) {
-		::json_tests::test_common::run_test_path(p, skip, do_json_test, h)
-	}
-
-	/// Run generic trie jsontests on a given file.
-	pub fn run_test_file<H: FnMut(&str, HookType)>(p: &Path, h: &mut H) {
-		::json_tests::test_common::run_test_file(p, do_json_test, h)
-	}
-
-	fn do_json_test<H: FnMut(&str, HookType)>(json: &[u8], h: &mut H) -> Vec<String> {
-		super::test_trie(json, TrieSpec::Generic, h)
+	#[allow(dead_code)]
+	fn do_json_test<H: FnMut(&str, HookType)>(path: &Path, json: &[u8], h: &mut H) -> Vec<String> {
+		super::test_trie(path, json, TrieSpec::Generic, h)
 	}
 
 	declare_test!{TrieTests_trietest, "TrieTests/trietest"}
@@ -92,18 +78,9 @@ mod secure {
 
 	use super::HookType;
 
-	/// Run secure trie jsontests on a given folder.
-	pub fn run_test_path<H: FnMut(&str, HookType)>(p: &Path, skip: &[&'static str], h: &mut H) {
-		::json_tests::test_common::run_test_path(p, skip, do_json_test, h)
-	}
-
-	/// Run secure trie jsontests on a given file.
-	pub fn run_test_file<H: FnMut(&str, HookType)>(p: &Path, h: &mut H) {
-		::json_tests::test_common::run_test_file(p, do_json_test, h)
-	}
-
-	fn do_json_test<H: FnMut(&str, HookType)>(json: &[u8], h: &mut H) -> Vec<String> {
-		super::test_trie(json, TrieSpec::Secure, h)
+	#[allow(dead_code)]
+	fn do_json_test<H: FnMut(&str, HookType)>(path: &Path, json: &[u8], h: &mut H) -> Vec<String> {
+		super::test_trie(path, json, TrieSpec::Secure, h)
 	}
 
 	declare_test!{TrieTests_hex_encoded_secure, "TrieTests/hex_encoded_securetrie_test"}

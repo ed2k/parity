@@ -1,42 +1,57 @@
-{ "block":
-	[
+{
+	"block": [
 		{
-			"reference": "None",
-			"comment": "This failing test is deemed skippable. Could not happen on a mainnet.",
-			"failing": "GeneralStateTest_stCreate2",
-			"subtests": ["RevertInCreateInInitCreate2_d0g0v0_Constantinople"]
-		},
-		{
-			"reference": "None",
-			"comment": "This failing test is deemed skippable. Could not happen on a mainnet.",
-			"failing": "GeneralStateTest_stRevertTest",
-			"subtests": ["RevertInCreateInInit_d0g0v0_Constantinople"]
+			"reference": "Issue https://github.com/paritytech/parity-ethereum/issues/11073 (also see https://github.com/paritytech/parity-ethereum/pull/10923)",
+			"failing": "stRevertTest",
+			"subtests": [
+				"RevertPrecompiledTouch_d0g0v0_Byzantium",
+				"RevertPrecompiledTouch_d0g0v0_Constantinople",
+				"RevertPrecompiledTouch_d0g0v0_ConstantinopleFix",
+				"RevertPrecompiledTouch_d0g0v0_EIP158",
+				"RevertPrecompiledTouch_d3g0v0_ConstantinopleFix",
+				"RevertPrecompiledTouchCC_d0g0v0_Byzantium",
+				"RevertPrecompiledTouchCC_d0g0v0_Constantinople",
+				"RevertPrecompiledTouchCC_d0g0v0_EIP158",
+				"RevertPrecompiledTouchDC_d0g0v0_Byzantium",
+				"RevertPrecompiledTouchDC_d0g0v0_Constantinople",
+				"RevertPrecompiledTouchDC_d0g0v0_EIP158",
+				"RevertPrecompiledTouchExactOOG_d7g1v0_ConstantinopleFix",
+				"RevertPrecompiledTouchExactOOG_d31g1v0_ConstantinopleFix",
+				"RevertPrecompiledTouch_storage_d3g0v0_ConstantinopleFix",
+				"RevertPrecompiledTouch_storage_d0g0v0_ConstantinopleFix"
+			]
 		}
 	],
-	"state":
-	[
+	"state": [
 		{
-			"reference": "None",
-			"comment": "This failing test is deemed skippable. Could not happen on a mainnet.",
-			"failing": "stCreate2Test",
+			"reference": "Issue https://github.com/paritytech/parity-ethereum/issues/11078 (also see https://github.com/paritytech/parity-ethereum/pull/10923)",
+			"failing": "stRevertTest",
 			"subtests": {
-				"RevertInCreateInInitCreate2": {
-					"subnumbers": ["1"],
-					"chain": "Constantinople (test)"
+				"RevertPrecompiledTouch_storage": {
+					"subnumbers": ["1", "2"],
+					"chain": "St. Peter's (test)"
 				}
 			}
 		},
 		{
-			"reference": "None",
-			"comment": "This failing test is deemed skippable. Could not happen on a mainnet.",
+			"reference": "Issue https://github.com/paritytech/parity-ethereum/issues/11079 (also see https://github.com/paritytech/parity-ethereum/pull/10923)",
 			"failing": "stRevertTest",
 			"subtests": {
-				"RevertInCreateInInit": {
-					"subnumbers": ["1"],
-					"chain": "Constantinople (test)"
+				"RevertPrecompiledTouchExactOOG": {
+					"subnumbers": ["61", "64"],
+					"chain": "St. Peter's (test)"
+				}
+			}
+		},
+		{
+			"reference": "Issue https://github.com/paritytech/parity-ethereum/issues/11080 (also see https://github.com/paritytech/parity-ethereum/pull/10923)",
+			"failing": "stRevertTest",
+			"subtests": {
+				"RevertPrecompiledTouch": {
+					"subnumbers": ["1", "2"],
+					"chain": "St. Peter's (test)"
 				}
 			}
 		}
-		
 	]
 }

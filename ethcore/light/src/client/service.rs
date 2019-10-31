@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Minimal IO service for light client.
 //! Just handles block import messages and passes them to the client.
@@ -20,10 +20,13 @@
 use std::fmt;
 use std::sync::Arc;
 
-use ethcore::client::ClientIoMessage;
-use ethcore::{db, BlockChainDB};
-use ethcore::error::Error as CoreError;
-use ethcore::spec::Spec;
+use common_types::{
+	errors::EthcoreError as CoreError,
+	io_message::ClientIoMessage,
+};
+use ethcore_db as db;
+use ethcore_blockchain::BlockChainDB;
+use spec::Spec;
 use io::{IoContext, IoError, IoHandler, IoService};
 
 use cache::Cache;
@@ -57,15 +60,15 @@ impl fmt::Display for Error {
 }
 
 /// Light client service.
-pub struct Service<T> {
+pub struct Service<T: 'static> {
 	client: Arc<Client<T>>,
-	io_service: IoService<ClientIoMessage>,
+	io_service: IoService<ClientIoMessage<()>>,
 }
 
 impl<T: ChainDataFetcher> Service<T> {
 	/// Start the service: initialize I/O workers and client itself.
-	pub fn start(config: ClientConfig, spec: &Spec, fetcher: T, db: Arc<BlockChainDB>, cache: Arc<Mutex<Cache>>) -> Result<Self, Error> {
-		let io_service = IoService::<ClientIoMessage>::start().map_err(Error::Io)?;
+	pub fn start(config: ClientConfig, spec: &Spec, fetcher: T, db: Arc<dyn BlockChainDB>, cache: Arc<Mutex<Cache>>) -> Result<Self, Error> {
+		let io_service = IoService::<ClientIoMessage<()>>::start().map_err(Error::Io)?;
 		let client = Arc::new(Client::new(config,
 			db.key_value().clone(),
 			db::COL_LIGHT_CHAIN,
@@ -74,9 +77,8 @@ impl<T: ChainDataFetcher> Service<T> {
 			io_service.channel(),
 			cache,
 		)?);
-
-		io_service.register_handler(Arc::new(ImportBlocks(client.clone()))).map_err(Error::Io)?;
 		spec.engine.register_client(Arc::downgrade(&client) as _);
+		io_service.register_handler(Arc::new(ImportBlocks(client.clone()))).map_err(Error::Io)?;
 
 		Ok(Service {
 			client,
@@ -85,12 +87,12 @@ impl<T: ChainDataFetcher> Service<T> {
 	}
 
 	/// Set the actor to be notified on certain chain events
-	pub fn add_notify(&self, notify: Arc<LightChainNotify>) {
+	pub fn add_notify(&self, notify: Arc<dyn LightChainNotify>) {
 		self.client.add_listener(Arc::downgrade(&notify));
 	}
 
 	/// Register an I/O handler on the service.
-	pub fn register_handler(&self, handler: Arc<IoHandler<ClientIoMessage> + Send>) -> Result<(), IoError> {
+	pub fn register_handler(&self, handler: Arc<dyn IoHandler<ClientIoMessage<()>> + Send>) -> Result<(), IoError> {
 		self.io_service.register_handler(handler)
 	}
 
@@ -102,8 +104,8 @@ impl<T: ChainDataFetcher> Service<T> {
 
 struct ImportBlocks<T>(Arc<Client<T>>);
 
-impl<T: ChainDataFetcher> IoHandler<ClientIoMessage> for ImportBlocks<T> {
-	fn message(&self, _io: &IoContext<ClientIoMessage>, message: &ClientIoMessage) {
+impl<T: ChainDataFetcher> IoHandler<ClientIoMessage<()>> for ImportBlocks<T> {
+	fn message(&self, _io: &IoContext<ClientIoMessage<()>>, message: &ClientIoMessage<()>) {
 		if let ClientIoMessage::BlockVerified = *message {
 			self.0.import_verified();
 		}
@@ -113,7 +115,7 @@ impl<T: ChainDataFetcher> IoHandler<ClientIoMessage> for ImportBlocks<T> {
 #[cfg(test)]
 mod tests {
 	use super::Service;
-	use ethcore::spec::Spec;
+	use spec;
 
 	use std::sync::Arc;
 	use cache::Cache;
@@ -125,7 +127,7 @@ mod tests {
 	#[test]
 	fn it_works() {
 		let db = test_helpers::new_db();
-		let spec = Spec::new_test();
+		let spec = spec::new_test();
 		let cache = Arc::new(Mutex::new(Cache::new(Default::default(), Duration::from_secs(6 * 3600))));
 
 		Service::start(Default::default(), &spec, fetch::unavailable(), db, cache).unwrap();

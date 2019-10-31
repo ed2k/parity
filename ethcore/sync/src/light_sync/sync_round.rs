@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Header download state machine.
 
@@ -20,11 +20,11 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::fmt;
 
-use ethcore::encoded;
-use ethcore::header::Header;
+use common_types::{encoded, header::Header};
 
 use light::net::ReqId;
 use light::request::CompleteHeadersRequest as HeadersRequest;
+use log::trace;
 
 use network::PeerId;
 use ethereum_types::H256;
@@ -37,7 +37,7 @@ const SCAFFOLD_ATTEMPTS: usize = 3;
 /// Context for a headers response.
 pub trait ResponseContext {
 	/// Get the peer who sent this response.
-	fn responder(&self) ->	PeerId;
+	fn responder(&self) -> PeerId;
 	/// Get the request ID this response corresponds to.
 	fn req_id(&self) -> &ReqId;
 	/// Get the (unverified) response data.

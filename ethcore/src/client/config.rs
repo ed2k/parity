@@ -1,29 +1,28 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::str::FromStr;
-use std::fmt::{Display, Formatter, Error as FmtError};
 
-use verification::{VerifierType, QueueConfig};
+use blockchain::Config as BlockChainConfig;
 use journaldb;
 use snapshot::SnapshotConfiguration;
+use trace::Config as TraceConfig;
+use types::client_types::Mode;
+use verification::{VerifierType, QueueConfig};
 
-pub use std::time::Duration;
-pub use blockchain::Config as BlockChainConfig;
-pub use trace::Config as TraceConfig;
 pub use evm::VMType;
 
 /// Client state db compaction profile
@@ -52,32 +51,6 @@ impl FromStr for DatabaseCompactionProfile {
 			"ssd" => Ok(DatabaseCompactionProfile::SSD),
 			"hdd" => Ok(DatabaseCompactionProfile::HDD),
 			_ => Err("Invalid compaction profile given. Expected default/hdd/ssd.".into()),
-		}
-	}
-}
-
-/// Operating mode for the client.
-#[derive(Debug, Eq, PartialEq, Clone)]
-pub enum Mode {
-	/// Always on.
-	Active,
-	/// Goes offline after client is inactive for some (given) time, but
-	/// comes back online after a while of inactivity.
-	Passive(Duration, Duration),
-	/// Goes offline after client is inactive for some (given) time and
-	/// stays inactive.
-	Dark(Duration),
-	/// Always off.
-	Off,
-}
-
-impl Display for Mode {
-	fn fmt(&self, f: &mut Formatter) -> Result<(), FmtError> {
-		match *self {
-			Mode::Active => write!(f, "active"),
-			Mode::Passive(..) => write!(f, "passive"),
-			Mode::Dark(..) => write!(f, "dark"),
-			Mode::Off => write!(f, "offline"),
 		}
 	}
 }
@@ -117,7 +90,7 @@ pub struct ClientConfig {
 	pub history: u64,
 	/// Ideal memory usage for state pruning history.
 	pub history_mem: usize,
-	/// Check seal valididity on block import
+	/// Check seal validity on block import
 	pub check_seal: bool,
 	/// Maximal number of transactions queued for verification in a separate thread.
 	pub transaction_verification_queue_size: usize,

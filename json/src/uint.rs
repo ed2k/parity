@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Lenient uint json deserialization for test json files.
 
@@ -34,21 +34,16 @@ impl Into<U256> for Uint {
 
 impl Into<u64> for Uint {
 	fn into(self) -> u64 {
-		u64::from(self.0)
+		self.0.low_u64()
 	}
 }
 
 impl Into<usize> for Uint {
 	fn into(self) -> usize {
-		// TODO: clean it after util conversions refactored.
-		u64::from(self.0) as usize
+		self.0.low_u64() as usize
 	}
 }
-impl Into<u8> for Uint {
-	fn into(self) -> u8 {
-		u64::from(self.0) as u8
-	}
-}
+
 
 impl Serialize for Uint {
 	fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -97,22 +92,24 @@ impl<'a> Visitor<'a> for UintVisitor {
 	}
 }
 
+/// Deserialize and validate that the value is non-zero
 pub fn validate_non_zero<'de, D>(d: D) -> Result<Uint, D::Error> where D: Deserializer<'de> {
 	let value = Uint::deserialize(d)?;
 
 	if value == Uint(U256::from(0)) {
-		return Err(Error::invalid_value(Unexpected::Unsigned(value.into()), &"a non-zero value"))
+		return Err(Error::invalid_value(Unexpected::Unsigned(0), &"a non-zero value"))
 	}
 
 	Ok(value)
 }
 
+/// Deserialize and validate that the value is non-zero
 pub fn validate_optional_non_zero<'de, D>(d: D) -> Result<Option<Uint>, D::Error> where D: Deserializer<'de> {
 	let value: Option<Uint> = Option::deserialize(d)?;
 
 	if let Some(value) = value {
 		if value == Uint(U256::from(0)) {
-			return Err(Error::invalid_value(Unexpected::Unsigned(value.into()), &"a non-zero value"))
+			return Err(Error::invalid_value(Unexpected::Unsigned(0), &"a non-zero value"))
 		}
 	}
 
@@ -121,9 +118,8 @@ pub fn validate_optional_non_zero<'de, D>(d: D) -> Result<Option<Uint>, D::Error
 
 #[cfg(test)]
 mod test {
-	use serde_json;
+	use super::Uint;
 	use ethereum_types::U256;
-	use uint::Uint;
 
 	#[test]
 	fn uint_deserialization() {

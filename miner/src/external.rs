@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! External Miner hashrate tracker.
 
@@ -84,7 +84,7 @@ mod tests {
 		// given
 		let m = miner();
 		assert_eq!(m.hashrate(), U256::from(0));
-		m.submit_hashrate(U256::from(10), H256::from(1));
+		m.submit_hashrate(U256::from(10), H256::from_low_u64_be(1));
 		assert_eq!(m.hashrate(), U256::from(10));
 
 		// when
@@ -99,12 +99,12 @@ mod tests {
 		// given
 		let m = miner();
 		assert_eq!(m.hashrate(), U256::from(0));
-		m.submit_hashrate(U256::from(10), H256::from(1));
+		m.submit_hashrate(U256::from(10), H256::from_low_u64_be(1));
 		assert_eq!(m.hashrate(), U256::from(10));
 
 		// when
-		m.submit_hashrate(U256::from(15), H256::from(1));
-		m.submit_hashrate(U256::from(20), H256::from(2));
+		m.submit_hashrate(U256::from(15), H256::from_low_u64_be(1));
+		m.submit_hashrate(U256::from(20), H256::from_low_u64_be(2));
 
 		// then
 		assert_eq!(m.hashrate(), U256::from(35));

@@ -1,55 +1,52 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::path::Path;
 use super::test_common::*;
-use pod_state::PodState;
+use pod::PodState;
 use trace;
-use client::{EvmTestClient, EvmTestError, TransactResult};
 use ethjson;
-use transaction::SignedTransaction;
+use test_helpers::{EvmTestClient, EvmTestError, TransactErr, TransactSuccess};
+use types::transaction::SignedTransaction;
 use vm::EnvInfo;
-use super::SKIP_TEST_STATE;
+use super::SKIP_TESTS;
 use super::HookType;
 
-/// Run state jsontests on a given folder.
-pub fn run_test_path<H: FnMut(&str, HookType)>(p: &Path, skip: &[&'static str], h: &mut H) {
-	::json_tests::test_common::run_test_path(p, skip, json_chain_test, h)
-}
-
-/// Run state jsontests on a given file.
-pub fn run_test_file<H: FnMut(&str, HookType)>(p: &Path, h: &mut H) {
-	::json_tests::test_common::run_test_file(p, json_chain_test, h)
-}
-
+#[allow(dead_code)]
 fn skip_test(subname: &str, chain: &String, number: usize) -> bool {
-	SKIP_TEST_STATE.state.iter().any(|state_test|{
+	trace!(target: "json-tests", "[state, skip_test] subname: '{}', chain: '{}', number: {}", subname, chain, number);
+	SKIP_TESTS.state.iter().any(|state_test|{
 		if let Some(subtest) = state_test.subtests.get(subname) {
+			trace!(target: "json-tests", "[state, skip_test] Maybe skipping {:?}", subtest);
 			chain == &subtest.chain &&
-			(subtest.subnumbers[0] == "*"
-				 || subtest.subnumbers.contains(&number.to_string()))
+			(
+				subtest.subnumbers[0] == "*" ||
+				subtest.subnumbers.contains(&number.to_string())
+			)
 		} else {
 			false
 		}
 	})
 }
 
-pub fn json_chain_test<H: FnMut(&str, HookType)>(json_data: &[u8], start_stop_hook: &mut H) -> Vec<String> {
-	::ethcore_logger::init_log();
-	let tests = ethjson::state::test::Test::load(json_data).unwrap();
+#[allow(dead_code)]
+pub fn json_chain_test<H: FnMut(&str, HookType)>(path: &Path, json_data: &[u8], start_stop_hook: &mut H) -> Vec<String> {
+	let _ = ::env_logger::try_init();
+	let tests = ethjson::test_helpers::state::Test::load(json_data)
+		.expect(&format!("Could not parse JSON state test data from {}", path.display()));
 	let mut failed = Vec::new();
 
 	for (name, test) in tests.into_iter() {
@@ -62,10 +59,10 @@ pub fn json_chain_test<H: FnMut(&str, HookType)>(json_data: &[u8], start_stop_ho
 
 			for (spec_name, states) in test.post_states {
 				let total = states.len();
-				let spec = match EvmTestClient::spec_from_json(&spec_name) {
+				let spec = match EvmTestClient::fork_spec_from_json(&spec_name) {
 					Some(spec) => spec,
 					None => {
-						println!("   - {} | {:?} Ignoring tests because of missing spec", name, spec_name);
+						println!("   - {} | {:?} Ignoring tests because of missing chainspec", name, spec_name);
 						continue;
 					}
 				};
@@ -73,7 +70,7 @@ pub fn json_chain_test<H: FnMut(&str, HookType)>(json_data: &[u8], start_stop_ho
 				for (i, state) in states.into_iter().enumerate() {
 					let info = format!("   - {} | {:?} ({}/{}) ...", name, spec_name, i + 1, total);
 					if skip_test(&name, &spec.name, i + 1) {
-						println!("{} in skip list : SKIPPED", info);
+						println!("{}: SKIPPED", info);
 						continue;
 					}
 
@@ -90,18 +87,18 @@ pub fn json_chain_test<H: FnMut(&str, HookType)>(json_data: &[u8], start_stop_ho
 							flushln!("{} fail", info);
 							failed.push(name.clone());
 						},
-						Ok(TransactResult::Ok { state_root, .. }) if state_root != post_root => {
+						Ok(Ok(TransactSuccess { state_root, .. })) if state_root != post_root => {
 							println!("{} !!! State mismatch (got: {}, expect: {}", info, state_root, post_root);
 							flushln!("{} fail", info);
 							failed.push(name.clone());
 						},
-						Ok(TransactResult::Err { state_root, ref error, .. }) if state_root != post_root => {
+						Ok(Err(TransactErr { state_root, ref error, .. })) if state_root != post_root => {
 							println!("{} !!! State mismatch (got: {}, expect: {}", info, state_root, post_root);
 							println!("{} !!! Execution error: {:?}", info, error);
 							flushln!("{} fail", info);
 							failed.push(name.clone());
 						},
-						Ok(TransactResult::Err { error, .. }) => {
+						Ok(Err(TransactErr { error, .. })) => {
 							flushln!("{} ok ({:?})", info, error);
 						},
 						Ok(_) => {
@@ -123,11 +120,13 @@ pub fn json_chain_test<H: FnMut(&str, HookType)>(json_data: &[u8], start_stop_ho
 
 #[cfg(test)]
 mod state_tests {
+	use std::path::Path;
+
 	use super::json_chain_test;
 	use json_tests::HookType;
 
-	fn do_json_test<H: FnMut(&str, HookType)>(json_data: &[u8], h: &mut H) -> Vec<String> {
-		json_chain_test(json_data, h)
+	fn do_json_test<H: FnMut(&str, HookType)>(path: &Path, json_data: &[u8], h: &mut H) -> Vec<String> {
+		json_chain_test(path, json_data, h)
 	}
 
 	declare_test!{GeneralStateTest_stArgsZeroOneBalance, "GeneralStateTests/stArgsZeroOneBalance/"}
@@ -164,7 +163,17 @@ mod state_tests {
 	declare_test!{GeneralStateTest_stRecursiveCreate, "GeneralStateTests/stRecursiveCreate/"}
 	declare_test!{GeneralStateTest_stRefundTest, "GeneralStateTests/stRefundTest/"}
 	declare_test!{GeneralStateTest_stReturnDataTest, "GeneralStateTests/stReturnDataTest/"}
+	// todo[dvdplm]:
+	//      "RevertPrecompiledTouch_storage" contains 4 tests, only two fails
+	//      "RevertPrecompiledTouchExactOOG" contains a ton of tests, only two fails
+	//      "RevertPrecompiledTouch" has 4 tests, 2 failures
+	//      Ignored in `currents.json`.
+	//      Issues:
+	//          https://github.com/paritytech/parity-ethereum/issues/11078
+	//          https://github.com/paritytech/parity-ethereum/issues/11079
+	//          https://github.com/paritytech/parity-ethereum/issues/11080
 	declare_test!{GeneralStateTest_stRevertTest, "GeneralStateTests/stRevertTest/"}
+	declare_test!{GeneralStateTest_stSStoreTest, "GeneralStateTests/stSStoreTest/"}
 	declare_test!{GeneralStateTest_stShift, "GeneralStateTests/stShift/"}
 	declare_test!{GeneralStateTest_stSolidityTest, "GeneralStateTests/stSolidityTest/"}
 	declare_test!{GeneralStateTest_stSpecialTest, "GeneralStateTests/stSpecialTest/"}
@@ -177,7 +186,6 @@ mod state_tests {
 	declare_test!{GeneralStateTest_stZeroCallsRevert, "GeneralStateTests/stZeroCallsRevert/"}
 	declare_test!{GeneralStateTest_stZeroCallsTest, "GeneralStateTests/stZeroCallsTest/"}
 	declare_test!{GeneralStateTest_stZeroKnowledge, "GeneralStateTests/stZeroKnowledge/"}
-	declare_test!{GeneralStateTest_stSStoreTest, "GeneralStateTests/stSStoreTest/"}
 
 	// Attempts to send a transaction that requires more than current balance:
 	// Tx:

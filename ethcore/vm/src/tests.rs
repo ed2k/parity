@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::sync::Arc;
 use std::collections::{HashMap, HashSet};
@@ -67,6 +67,8 @@ pub struct FakeExt {
 	pub balances: HashMap<Address, U256>,
 	pub tracing: bool,
 	pub is_static: bool,
+
+	chain_id: u64,
 }
 
 // similar to the normal `finalize` function, but ignoring NeedsReturn.
@@ -98,20 +100,33 @@ impl FakeExt {
 		ext
 	}
 
+	/// New fake externalities with Istanbul schedule rules
+	pub fn new_istanbul() -> Self {
+		let mut ext = FakeExt::default();
+		ext.schedule = Schedule::new_istanbul();
+		ext
+	}
+
 	/// Alter fake externalities to allow wasm
 	pub fn with_wasm(mut self) -> Self {
 		self.schedule.wasm = Some(Default::default());
+		self
+	}
+
+	/// Set chain ID
+	pub fn with_chain_id(mut self, chain_id: u64) -> Self {
+		self.chain_id = chain_id;
 		self
 	}
 }
 
 impl Ext for FakeExt {
 	fn initial_storage_at(&self, _key: &H256) -> Result<H256> {
-		Ok(H256::new())
+		Ok(H256::zero())
 	}
 
 	fn storage_at(&self, key: &H256) -> Result<H256> {
-		Ok(self.store.get(key).unwrap_or(&H256::new()).clone())
+		Ok(self.store.get(key).unwrap_or(&H256::zero()).clone())
 	}
 
 	fn set_storage(&mut self, key: H256, value: H256) -> Result<()> {
@@ -136,7 +151,7 @@ impl Ext for FakeExt {
 	}
 
 	fn blockhash(&mut self, number: &U256) -> H256 {
-		self.blockhashes.get(number).unwrap_or(&H256::new()).clone()
+		self.blockhashes.get(number).unwrap_or(&H256::zero()).clone()
 	}
 
 	fn create(
@@ -144,6 +159,7 @@ impl Ext for FakeExt {
 		gas: &U256,
 		value: &U256,
 		code: &[u8],
+		_parent_version: &U256,
 		address: CreateContractAddress,
 		_trap: bool,
 	) -> ::std::result::Result<ContractCreateResult, TrapKind> {
@@ -200,7 +216,7 @@ impl Ext for FakeExt {
 
 	fn log(&mut self, topics: Vec<H256>, data: &[u8]) -> Result<()> {
 		self.logs.push(FakeLogEntry {
-			topics: topics,
+			topics,
 			data: data.to_vec()
 		});
 		Ok(())
@@ -221,6 +237,10 @@ impl Ext for FakeExt {
 
 	fn env_info(&self) -> &EnvInfo {
 		&self.info
+	}
+
+	fn chain_id(&self) -> u64 {
+		self.chain_id
 	}
 
 	fn depth(&self) -> usize {

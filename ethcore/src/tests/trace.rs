@@ -1,44 +1,50 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 //! Client tests of tracing
 
-use ethkey::KeyPair;
+use parity_crypto::publickey::KeyPair;
 use hash::keccak;
 use block::*;
 use ethereum_types::{U256, Address};
 use io::*;
-use spec::*;
-use client::*;
+use spec;
 use test_helpers::get_temp_state_db;
-use client::{BlockChainClient, Client, ClientConfig};
+use client::{Client, ClientConfig};
+use client_traits::{BlockChainClient, ImportBlock};
 use std::sync::Arc;
-use header::Header;
+use std::str::FromStr;
 use miner::Miner;
-use transaction::{Action, Transaction};
-use views::BlockView;
 use trace::{RewardType, LocalizedTrace};
 use trace::trace::Action::Reward;
 use test_helpers;
-use verification::queue::kind::blocks::Unverified;
+use types::{
+	ids::BlockId,
+	transaction::{Action, Transaction},
+	trace_filter::Filter as TraceFilter,
+	header::Header,
+	verification::Unverified,
+	view,
+	views::BlockView,
+};
 
 #[test]
 fn can_trace_block_and_uncle_reward() {
 	let db = test_helpers::new_db();
-	let spec = Spec::new_test_with_reward();
+	let spec = spec::new_test_with_reward();
 	let engine = &*spec.engine;
 
 	// Create client
@@ -70,7 +76,7 @@ fn can_trace_block_and_uncle_reward() {
 	let mut last_header = genesis_header.clone();
 	last_hashes.push(last_header.hash());
 
-	let kp = KeyPair::from_secret_slice(&keccak("")).unwrap();
+	let kp = KeyPair::from_secret_slice(keccak("").as_bytes()).unwrap();
 	let author = kp.address();
 
 	// Add root block first
@@ -85,7 +91,6 @@ fn can_trace_block_and_uncle_reward() {
 		(3141562.into(), 31415620.into()),
 		vec![],
 		false,
-		&mut Vec::new().into_iter(),
 	).unwrap();
 	rolling_timestamp += 10;
 	root_block.set_timestamp(rolling_timestamp);
@@ -114,7 +119,6 @@ fn can_trace_block_and_uncle_reward() {
 		(3141562.into(), 31415620.into()),
 		vec![],
 		false,
-		&mut Vec::new().into_iter(),
 	).unwrap();
 	rolling_timestamp += 10;
 	parent_block.set_timestamp(rolling_timestamp);
@@ -142,7 +146,6 @@ fn can_trace_block_and_uncle_reward() {
 		(3141562.into(), 31415620.into()),
 		vec![],
 		false,
-		&mut Vec::new().into_iter(),
 		).unwrap();
 	rolling_timestamp += 10;
 	block.set_timestamp(rolling_timestamp);
@@ -161,7 +164,7 @@ fn can_trace_block_and_uncle_reward() {
 	}
 
 	let mut uncle = Header::new();
-	let uncle_author: Address = "ef2d6d194084c2de36e0dabfce45d046b37d1106".into();
+	let uncle_author = Address::from_str("ef2d6d194084c2de36e0dabfce45d046b37d1106").unwrap();
 	uncle.set_author(uncle_author);
 	uncle.set_parent_hash(root_header.hash());
 	uncle.set_gas_limit(genesis_gas);
@@ -178,7 +181,6 @@ fn can_trace_block_and_uncle_reward() {
 
 	block.drain();
 	client.flush_queue();
-	client.import_verified_blocks();
 
 	// Test0. Check overall filter
 	let filter = TraceFilter {

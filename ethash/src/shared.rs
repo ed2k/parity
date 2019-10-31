@@ -1,18 +1,18 @@
-// Copyright 2015-2018 Parity Technologies (UK) Ltd.
-// This file is part of Parity.
+// Copyright 2015-2019 Parity Technologies (UK) Ltd.
+// This file is part of Parity Ethereum.
 
-// Parity is free software: you can redistribute it and/or modify
+// Parity Ethereum is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity is distributed in the hope that it will be useful,
+// Parity Ethereum is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use primal::is_prime;
 
@@ -70,34 +70,7 @@ pub type NodeBytes = [u8; NODE_BYTES];
 pub type NodeWords = [u32; NODE_WORDS];
 pub type NodeDwords = [u64; NODE_DWORDS];
 
-macro_rules! static_assert_size_eq {
-	(@inner $a:ty, $b:ty, $($rest:ty),*) => {
-		fn first() {
-			static_assert_size_eq!($a, $b);
-		}
-
-		fn second() {
-			static_assert_size_eq!($b, $($rest),*);
-		}
-	};
-	(@inner $a:ty, $b:ty) => {
-		unsafe {
-			let val: $b = ::std::mem::uninitialized();
-			let _: $a = ::std::mem::transmute(val);
-		}
-	};
-	($($rest:ty),*) => {
-		static_assert_size_eq!(size_eq: $($rest),*);
-	};
-	($name:ident : $($rest:ty),*) => {
-		#[allow(dead_code)]
-		fn $name() {
-			static_assert_size_eq!(@inner $($rest),*);
-		}
-	};
-}
-
-static_assert_size_eq!(Node, NodeBytes, NodeWords, NodeDwords);
+assert_eq_size!(node; Node, NodeBytes, NodeWords, NodeDwords);
 
 #[repr(C)]
 pub union Node {
