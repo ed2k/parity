@@ -120,7 +120,7 @@ impl SpecType {
 	pub fn spec<'a, T: Into<SpecParams<'a>>>(&self, params: T) -> Result<Spec, String> {
 		let params = params.into();
 		match *self {
-			SpecType::EthGold => Ok(ethereum::new_ethgold(params)),
+			SpecType::EthGold => Ok(spec::new_ethgold(params)),
 			SpecType::Foundation => Ok(spec::new_foundation(params)),
 			SpecType::Classic => Ok(spec::new_classic(params)),
 			SpecType::Poanet => Ok(spec::new_poanet(params)),

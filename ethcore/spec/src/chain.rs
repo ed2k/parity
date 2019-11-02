@@ -64,6 +64,7 @@ bundle_release_spec! {
 	"ethereum/ellaism" => new_ellaism,
 	"ethereum/expanse" => new_expanse,
 	"ethereum/foundation" => new_foundation,
+        "ethereum/ethgold" => new_ethgold,
 	"ethereum/goerli" => new_goerli,
 	"ethereum/kotti" => new_kotti,
 	"ethereum/kovan" => new_kovan,

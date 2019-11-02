@@ -140,8 +140,8 @@ pub struct EthashExtensions {
 	pub dao_hardfork_accounts: Vec<Address>,
     /// ETG hard-fork transition block.
     pub etg_hardfork_transition: u64,
-    /// ETG hard-fork dev address.
-    pub etg_hardfork_dev_accounts: Vec<Address>,
+    // /// ETG hard-fork dev address.
+    // pub etg_hardfork_dev_accounts: Vec<Address>,
 }
 
 impl From<ethjson::spec::EthashParams> for EthashExtensions {
@@ -152,7 +152,7 @@ impl From<ethjson::spec::EthashParams> for EthashExtensions {
 			dao_hardfork_beneficiary: p.dao_hardfork_beneficiary.map_or_else(Address::zero, Into::into),
 			dao_hardfork_accounts: p.dao_hardfork_accounts.unwrap_or_else(Vec::new).into_iter().map(Into::into).collect(),
             etg_hardfork_transition: p.etg_hardfork_transition.map_or(u64::max_value(), Into::into),
-            etg_hardfork_dev_accounts: p.etg_hardfork_dev_accounts.unwrap_or_else(Vec::new).into_iter().map(Into::into).collect(),
+            // etg_hardfork_dev_accounts: p.etg_hardfork_dev_accounts.unwrap_or_else(Vec::new).into_iter().map(Into::into).collect(),
 		}
 	}
 }

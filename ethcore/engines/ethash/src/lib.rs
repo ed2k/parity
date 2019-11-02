@@ -18,17 +18,6 @@ use std::cmp;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
-<<<<<<< HEAD:ethcore/src/ethereum/ethash.rs
-use hash::{KECCAK_EMPTY_LIST_RLP};
-use engines::block_reward::{self, BlockRewardContract, RewardKind};
-use ethash::{self, quick_get_difficulty, slow_hash_block_number, EthashManager, OptimizeFor};
-use ethereum_types::{H256, H64, U256, Address};
-use unexpected::{OutOfBounds, Mismatch};
-use block::*;
-use error::{BlockError, Error};
-use header::{Header, BlockNumber, ExtendedHeader};
-use engines::{self, Engine};
-=======
 
 use block_reward::{self, BlockRewardContract, RewardKind};
 use common_types::{
@@ -44,11 +33,11 @@ use common_types::{
 };
 use engine::Engine;
 use ethereum_types::{H256, U256};
->>>>>>> 2c97bcc1a4f61415cc26a076fa1054b2be64de17:ethcore/engines/ethash/src/lib.rs
+use ethereum_types::Address;
 use ethjson;
 use ethash::{self, quick_get_difficulty, slow_hash_block_number, EthashManager};
 use keccak_hash::{KECCAK_EMPTY_LIST_RLP};
-use log::trace;
+use log::{trace, info};
 use macros::map;
 use machine::{
 	ExecutedBlock,
@@ -117,7 +106,9 @@ pub struct EthashParams {
 	pub block_reward_contract: Option<BlockRewardContract>,
 	/// Difficulty bomb delays.
 	pub difficulty_bomb_delays: BTreeMap<BlockNumber, BlockNumber>,
-<<<<<<< HEAD:ethcore/src/ethereum/ethash.rs
+
+	/// Block to transition to progpow
+	pub progpow_transition: u64,
 
 }
 
@@ -132,10 +123,6 @@ impl EthashParams {
         }
         info!(target: "etg", "]");
     }
-=======
-	/// Block to transition to progpow
-	pub progpow_transition: u64,
->>>>>>> 2c97bcc1a4f61415cc26a076fa1054b2be64de17:ethcore/engines/ethash/src/lib.rs
 }
 
 impl From<ethjson::spec::EthashParams> for EthashParams {
@@ -211,17 +198,11 @@ impl Ethash {
 		ethash_params: EthashParams,
 		machine: Machine,
 		optimize_for: T,
-<<<<<<< HEAD:ethcore/src/ethereum/ethash.rs
-	) -> Arc<Self> {
-        ethash_params.dump_etg_info();
-
-		Arc::new(Ethash {
-=======
 	) -> Self {
+        ethash_params.dump_etg_info();
 		let progpow_transition = ethash_params.progpow_transition;
 
 		Ethash {
->>>>>>> 2c97bcc1a4f61415cc26a076fa1054b2be64de17:ethcore/engines/ethash/src/lib.rs
 			ethash_params,
 			machine,
 			pow: Arc::new(EthashManager::new(
@@ -361,15 +342,11 @@ impl Engine for Ethash {
 				let n_uncles = block.uncles.len();
 
 				// Bestow block rewards.
-<<<<<<< HEAD:ethcore/src/ethereum/ethash.rs
 				let mut result_block_reward = reward + reward.shr(5) * U256::from(n_uncles);
 				if number >= self.ethash_params.etg_hardfork_transition && !self.ethash_params.etg_hardfork_dev_accounts.is_empty() {
 					// 20% of the block reward go to the dev team
 					let dev_reward = result_block_reward * U256::from(2) / U256::from(10);
 					let author_reward = result_block_reward - dev_reward;
-=======
-				let result_block_reward = reward + reward.shr(5) * U256::from(n_uncles);
->>>>>>> 2c97bcc1a4f61415cc26a076fa1054b2be64de17:ethcore/engines/ethash/src/lib.rs
 
 					let idx = number as usize % self.ethash_params.etg_hardfork_dev_accounts.len();
 					let lucky_dev_address = self.ethash_params.etg_hardfork_dev_accounts[idx];
@@ -424,7 +401,6 @@ impl Engine for Ethash {
 		}
 
 		let difficulty = ethash::boundary_to_difficulty(&H256(quick_get_difficulty(
-			header.number(),
 			&header.bare_hash().0,
 			seal.nonce.to_low_u64_be(),
 			&seal.mix_hash.0,
@@ -439,29 +415,7 @@ impl Engine for Ethash {
 	}
 
 	fn verify_block_unordered(&self, header: &Header) -> Result<(), Error> {
-<<<<<<< HEAD:ethcore/src/ethereum/ethash.rs
-		let seal = Seal::parse_seal(header.seal())?;
-
-		let result = self.pow.compute_light(header.number() as u64, &header.bare_hash().0, seal.nonce.low_u64());
-		let mix = H256(result.mix_hash);
-		let difficulty = ethash::boundary_to_difficulty(&H256(result.value));
-		info!(target: "miner", "num: {num}, seed: {seed}, h: {h}, non: {non}, mix: {mix}, res: {res}",
-			   num = header.number() as u64,
-			   seed = H256(slow_hash_block_number(header.number() as u64)),
-			   h = header.bare_hash(),
-			   non = seal.nonce.low_u64(),
-			   mix = H256(result.mix_hash),
-			   res = H256(result.value));
-		if mix != seal.mix_hash {
-			return Err(From::from(BlockError::MismatchedH256SealElement(Mismatch { expected: mix, found: seal.mix_hash })));
-		}
-		if &difficulty < header.difficulty() {
-			return Err(From::from(BlockError::InvalidProofOfWork(OutOfBounds { min: Some(header.difficulty().clone()), max: None, found: difficulty })));
-		}
-		Ok(())
-=======
 		verify_block_unordered(&self.pow, header)
->>>>>>> 2c97bcc1a4f61415cc26a076fa1054b2be64de17:ethcore/engines/ethash/src/lib.rs
 	}
 
 	fn verify_block_family(&self, header: &Header, parent: &Header) -> Result<(), Error> {
@@ -587,7 +541,6 @@ impl Ethash {
 	}
 }
 
-<<<<<<< HEAD:ethcore/src/ethereum/ethash.rs
 fn calculate_etg_block_reward(etg_hardfork_transition: u64,
                               etg_reward_halving_interval: u64,
                               etg_block_reward: U256,
@@ -609,9 +562,6 @@ fn calculate_etg_block_reward(etg_hardfork_transition: u64,
     }
 }
 
-fn ecip1017_eras_block_reward(era_rounds: u64, mut reward: U256, block_number:u64) -> (u64, U256) {
-=======
-
 /// Calculates the number of eras and reward
 ///
 /// # Panics
@@ -621,7 +571,6 @@ fn ecip1017_eras_block_reward(era_rounds: u64, mut reward: U256, block_number: u
 	// NOTE(niklasad1): all numbers is divisible by 1, it will cause the if below
 	// to succeed except for the first block. Thus, `era_rounds - 1 == 0` and cause `divide by zero`
 	assert!(era_rounds > 1, "ecip1017EraRounds must be bigger than 1");
->>>>>>> 2c97bcc1a4f61415cc26a076fa1054b2be64de17:ethcore/engines/ethash/src/lib.rs
 	let eras = if block_number != 0 && block_number % era_rounds == 0 {
 		block_number / era_rounds - 1
 	} else {
