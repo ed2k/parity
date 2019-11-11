@@ -151,7 +151,7 @@ pub fn quick_get_difficulty(header_hash: &H256, nonce: u64, mix_hash: &H256, pro
 	unsafe {
 		if progpow {
 	//TODO if block_number > PROGPOW_START {
-	//	return quick_get_progpow_difficulty(header_hash, nonce, mix_hash)
+		return quick_get_progpow_difficulty(header_hash, nonce, mix_hash);
 	//}
 			let seed = keccak_f800_short(*header_hash, nonce, [0u32; 8]);
 			keccak_f800_long(*header_hash, seed, mem::transmute(*mix_hash))

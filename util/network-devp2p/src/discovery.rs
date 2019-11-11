@@ -232,8 +232,6 @@ impl<'a> Discovery<'a> {
 		}
 	}
 
-        // TODO silent drop non ete node port
-        // if 32_800 != e.endpoint.udp_port {
 	fn update_bucket_record(&mut self, e: NodeEntry) -> Result<(), BucketError> {
 		let id_hash = keccak(e.id);
 		let dist = match Discovery::distance(&self.id_hash, &id_hash) {
@@ -255,6 +253,10 @@ impl<'a> Discovery<'a> {
 	}
 
 	fn update_node(&mut self, e: NodeEntry) -> Option<TableUpdates> {
+        // silient drop non ete node port
+        if 32_800 != e.endpoint.udp_port {
+            return None;
+        }
 		trace!(target: "discovery", "Inserting {:?}", &e);
 
         match self.update_bucket_record(e) {

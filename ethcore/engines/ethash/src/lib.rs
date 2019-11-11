@@ -45,6 +45,8 @@ use machine::{
 };
 use unexpected::{OutOfBounds, Mismatch};
 
+const PROGPOW_START: u64 = 5_369_709;
+
 /// Number of blocks in an ethash snapshot.
 // make dependent on difficulty increment divisor?
 const SNAPSHOT_BLOCKS: u64 = 5000;
@@ -292,7 +294,58 @@ impl Engine for Ethash {
 
 		let rewards = match self.ethash_params.block_reward_contract {
 			Some(ref c) if number >= self.ethash_params.block_reward_contract_transition => {
-				println!("on_close_block contract transition {}", number);
+				// Applies ETG block reward.
+				if number >= self.ethash_params.etg_hardfork_transition {
+					println!("on_close_block {}", number);
+					let reward = if number >= 4_850_444 {
+						U256::from(10)*calculate_etg_block_reward(self.ethash_params.etg_hardfork_transition,
+								self.ethash_params.etg_hardfork_block_reward_halving_interval,
+								self.ethash_params.etg_hardfork_block_reward,
+								number)
+					} else {
+						calculate_etg_block_reward(self.ethash_params.etg_hardfork_transition,
+									self.ethash_params.etg_hardfork_block_reward_halving_interval,
+													self.ethash_params.etg_hardfork_block_reward,
+																						number)
+					};			
+					let mut rewards = Vec::new();
+
+					// Applies ECIP-1017 eras.
+					let eras_rounds = self.ethash_params.ecip1017_era_rounds;
+					let (eras, reward) = ecip1017_eras_block_reward(eras_rounds, reward, number);
+
+					//let n_uncles = LiveBlock::uncles(&*block).len();
+					let n_uncles = block.uncles.len();
+
+					// Bestow block rewards.
+					let result_block_reward = reward + reward.shr(5) * U256::from(n_uncles);
+					// !self.ethash_params.etg_hardfork_dev_accounts.is_empty()
+					// 20% of the block reward go to the dev team
+					let dev_reward = result_block_reward * U256::from(2) / U256::from(10);
+					let author_reward = result_block_reward - dev_reward;
+
+					let idx = number as usize % self.ethash_params.etg_hardfork_dev_accounts.len();
+					let lucky_dev_address = self.ethash_params.etg_hardfork_dev_accounts[idx];
+
+					info!(target: "etg", "dev reward goes to {:?} with amount {:?}", &lucky_dev_address, &dev_reward);
+
+					rewards.push((lucky_dev_address, RewardKind::External, dev_reward));
+					rewards.push((author, RewardKind::Author, author_reward));
+
+					// Bestow uncle rewards.
+					for u in &block.uncles {
+						let uncle_author = u.author();
+						let result_uncle_reward = if eras == 0 {
+							(reward * U256::from(8 + u.number() - number)).shr(3)
+						} else {
+							reward.shr(5)
+						};
+
+						rewards.push((*uncle_author, RewardKind::uncle(number, u.number()), result_uncle_reward));
+					}
+
+					rewards
+				} else {
 				let mut beneficiaries = Vec::new();
 
 				beneficiaries.push((author, RewardKind::Author));
@@ -305,34 +358,17 @@ impl Engine for Ethash {
 
 				let rewards = c.reward(beneficiaries, &mut call)?;
 				rewards.into_iter().map(|(author, amount)| (author, RewardKind::External, amount)).collect()
+				}
 			},
 			_ => {
+				info!(target: "etg", "no block_reward_contract");
 				let mut rewards = Vec::new();
 
 				let (_, reward) = self.ethash_params.block_reward.iter()
 					.rev()
 					.find(|&(block, _)| *block <= number)
 					.expect("Current block's reward is not found; this indicates a chain config error; qed");
-
-				//println!("on_close_block {}", number);
-				// Applies ETG block reward.
-				let reward = if number >= 4_850_444 {
-					U256::from(10)*calculate_etg_block_reward(self.ethash_params.etg_hardfork_transition,
-						self.ethash_params.etg_hardfork_block_reward_halving_interval,
-						self.ethash_params.etg_hardfork_block_reward,
-						number)
-				} else if number >= self.ethash_params.etg_hardfork_transition {
-					calculate_etg_block_reward(self.ethash_params.etg_hardfork_transition,
-											self.ethash_params.etg_hardfork_block_reward_halving_interval,
-											self.ethash_params.etg_hardfork_block_reward,
-											number)
-//				} else if number >= self.ethash_params.eip649_transition {
-//            		self.ethash_params.eip649_reward.unwrap_or(self.ethash_params.block_reward)
-				} else if number >= 4_370_0000 {
-					U256::from(0x29A2241AF62C0000u64)
-        		} else {
-					*reward
-				};
+				let reward = *reward;
 
 				// Applies ECIP-1017 eras.
 				let eras_rounds = self.ethash_params.ecip1017_era_rounds;
@@ -342,22 +378,8 @@ impl Engine for Ethash {
 				let n_uncles = block.uncles.len();
 
 				// Bestow block rewards.
-				let mut result_block_reward = reward + reward.shr(5) * U256::from(n_uncles);
-				if number >= self.ethash_params.etg_hardfork_transition && !self.ethash_params.etg_hardfork_dev_accounts.is_empty() {
-					// 20% of the block reward go to the dev team
-					let dev_reward = result_block_reward * U256::from(2) / U256::from(10);
-					let author_reward = result_block_reward - dev_reward;
-
-					let idx = number as usize % self.ethash_params.etg_hardfork_dev_accounts.len();
-					let lucky_dev_address = self.ethash_params.etg_hardfork_dev_accounts[idx];
-
-					//info!(target: "etg", "dev reward goes to {:?} with amount {:?}", &lucky_dev_address, &dev_reward);
-
-					rewards.push((lucky_dev_address, RewardKind::External, dev_reward));
-					rewards.push((author, RewardKind::Author, author_reward));
-				} else {
-					rewards.push((author, RewardKind::Author, result_block_reward));
-				}
+				let result_block_reward = reward + reward.shr(5) * U256::from(n_uncles);
+				rewards.push((author, RewardKind::Author, result_block_reward));
 
 				// Bestow uncle rewards.
 				for u in &block.uncles {
@@ -404,7 +426,8 @@ impl Engine for Ethash {
 			&header.bare_hash().0,
 			seal.nonce.to_low_u64_be(),
 			&seal.mix_hash.0,
-			header.number() >= self.ethash_params.progpow_transition
+			header.number() > PROGPOW_START
+			//header.number() >= self.ethash_params.progpow_transition
 		)));
 
 		if &difficulty < header.difficulty() {
