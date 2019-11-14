@@ -1,6 +1,28 @@
 #include <stdint.h>
 #include <string.h>
 
+/** libkeccak-tiny
+ *
+ * A single-file implementation of SHA-3 and SHAKE.
+ *
+ * Implementor: David Leon Gil
+ * License: CC0, attribution kindly requested. Blame taken too,
+ * but not liability.
+ */
+
+#define decshake(bits) \
+  int shake##bits(uint8_t*, size_t, const uint8_t*, size_t);
+
+#define deckeccak(bits) \
+  int keccak_##bits(uint8_t*, size_t, const uint8_t*, size_t);
+
+decshake(128)
+decshake(256)
+deckeccak(224)
+deckeccak(256)
+deckeccak(384)
+deckeccak(512)
+
 /******** The Keccak-f[1600] permutation ********/
 
 /*** Constants. ***/
@@ -1167,18 +1189,16 @@ uint32_t calculate_full_dataset_num_items(uint32_t epoch_number)
 
 /**************API********************************/
 
-
-epoch_context g_ctx = {0};
-epoch_context g_ctx_old = {0};
-
-hash512* create_light_cache(uint32_t epoch) 
+epoch_context* create_light_cache(uint32_t epoch) 
 {  
+    static epoch_context g_ctx = {0};
+    static epoch_context g_ctx_old = {0};
     while (g_ctx.refcount) {
         // busy wait
         usleep(1000);
-    }     
+    }
     if (g_ctx.epoch_number == epoch) {
-        return g_ctx.light_cache;
+        return &g_ctx;
     }
 
     while (g_ctx_old.refcount) {
@@ -1186,7 +1206,7 @@ hash512* create_light_cache(uint32_t epoch)
         usleep(1000);
     }     
     if (g_ctx_old.epoch_number == epoch) {
-        return g_ctx_old.light_cache;
+        return &g_ctx_old;
     }
 
     epoch_context *ctx_p = &g_ctx;
@@ -1213,7 +1233,7 @@ hash512* create_light_cache(uint32_t epoch)
     ctx_p->epoch_number = epoch;
 
     ctx_p->refcount = 0;
-    return ctx_p->light_cache;
+    return ctx_p;
 }
 
 #include <inttypes.h>
@@ -1235,17 +1255,13 @@ get_from_mix(uint8_t header[32], uint64_t nonce, uint8_t mix[32], uint8_t out[32
   Assume checking light_cache is ready before access
 */
 void 
-get_block_progpow_hash(uint8_t header[32],
+get_block_progpow_hash(uint32_t epoch, uint8_t header[32],
                        uint64_t nonce, uint8_t out[64])
 {
     ethash_return_value_t r;
-    progpow(&r, &g_ctx, (const hash256*)header, nonce);   
+    progpow(&r, create_light_cache(epoch), (const hash256*)header, nonce);   
 
     memcpy(out, &r.result, 32);
     memcpy(out+32, &r.mix_hash, 32);
 }
 
-void  
-get_dataset_item(uint8_t r[256], uint32_t index) {
-    calculate_dataset_item_progpow((hash2048*)r, &g_ctx, index);     
-}

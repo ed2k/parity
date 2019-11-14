@@ -189,7 +189,7 @@ pub fn light_progpow(light: &Light, header_hash: &H256, nonce: u64) -> ProofOfWo
 
 	let mut out = [0; 64];
 	let _x = unsafe {
-		get_block_progpow_hash(header_hash, nonce, &mut out)
+		get_block_progpow_hash((light.block_number/30000) as u32, header_hash, nonce, &mut out)
 	};		
 	let mut mix_hash: [u8;32] = [0;32];
 	mix_hash[..].clone_from_slice(&out[32..64]);
